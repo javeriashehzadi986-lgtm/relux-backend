@@ -5,6 +5,7 @@ const cors = require("cors");
 const connectDB = require("./config/db");
 const authRoutes = require("./routes/authRoutes");
 const sellerVerificationRoutes = require("./routes/sellerVerificationRoutes");
+const adminSellerVerificationRoutes = require("./routes/adminSellerVerificationRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5002;
@@ -38,6 +39,7 @@ app.get("/api/health", async (req, res) => {
 
 app.use("/api/auth", authRoutes);
 app.use("/api/seller/verification", sellerVerificationRoutes);
+app.use("/api/admin/seller-verifications", adminSellerVerificationRoutes);
 
 app.use((error, req, res, next) => {
   if (error?.type === "entity.too.large") {
