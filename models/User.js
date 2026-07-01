@@ -6,6 +6,8 @@ const userSchema = new mongoose.Schema(
     name: { type: String, required: true, trim: true },
     email: { type: String, required: true, unique: true, lowercase: true, trim: true },
     password: { type: String, required: true, minlength: 6 },
+    phone: { type: String, trim: true, default: "" },
+    city: { type: String, trim: true, default: "" },
     role: { type: String, enum: ["buyer", "seller", "admin"], default: "buyer" },
     status: { type: String, enum: ["active", "pending", "suspended"], default: "active" },
   },
@@ -28,6 +30,8 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     email: this.email,
     role: this.role,
     status: this.status,
+    phone: this.phone,
+    city: this.city,
   };
 };
 
