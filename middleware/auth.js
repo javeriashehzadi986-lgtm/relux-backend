@@ -26,4 +26,16 @@ async function protect(req, res, next) {
   }
 }
 
-module.exports = { signToken, protect, JWT_SECRET };
+function authorize(...roles) {
+  return (req, res, next) => {
+    if (!req.user) {
+      return res.status(401).json({ message: "Not authorized" });
+    }
+    if (!roles.includes(req.user.role)) {
+      return res.status(403).json({ message: "You do not have access to this resource" });
+    }
+    next();
+  };
+}
+
+module.exports = { signToken, protect, authorize, JWT_SECRET };
