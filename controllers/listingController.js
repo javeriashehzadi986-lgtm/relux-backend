@@ -4,6 +4,9 @@ function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
     return "Database connection failed. Restart the backend server and check MongoDB password in .env";
   }
+  if (error.code === 11000 && error.message?.includes("productId")) {
+    return "Database index conflict. Restart the backend server once, then try adding the listing again.";
+  }
   return error.message || "Something went wrong";
 }
 
