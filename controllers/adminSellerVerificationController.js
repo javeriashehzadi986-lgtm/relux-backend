@@ -93,13 +93,24 @@ async function rejectApplication(req, res) {
       return res.status(404).json({ message: "Application not found" });
     }
 
+    const user = await User.findById(verification.userId);
+    if (!user) {
+      return res.status(404).json({ message: "Seller user not found" });
+    }
+
     verification.verificationStatus = "rejected";
     verification.reviewedAt = new Date();
     verification.adminNote = req.body?.adminNote?.trim() || "Application rejected by admin";
 
-    await verification.save();
+    user.status = "rejected";
 
-    res.json({ message: "Seller application rejected" });
+    await verification.save();
+    await user.save();
+
+    res.json({
+      message: "Seller application rejected",
+      application: mapApplication(await verification.populate("userId", "name email phone city role status")),
+    });
   } catch (error) {
     res.status(500).json({ message: error.message || "Failed to reject seller" });
   }
