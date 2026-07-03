@@ -9,7 +9,7 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
     role: { type: String, enum: ["buyer", "seller", "admin"], default: "buyer" },
-    status: { type: String, enum: ["active", "pending", "suspended"], default: "active" },
+    status: { type: String, enum: ["active", "pending", "rejected", "suspended"], default: "active" },
   },
   { timestamps: true },
 );

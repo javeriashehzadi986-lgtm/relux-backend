@@ -144,7 +144,7 @@ async function updateDocuments(req, res) {
       return res.status(404).json({ message: "Seller verification record not found" });
     }
 
-    if (req.user.status !== "pending") {
+    if (req.user.status === "rejected" || req.user.status !== "pending") {
       req.user.status = "pending";
       await req.user.save();
     }
