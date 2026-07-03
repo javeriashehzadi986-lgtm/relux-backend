@@ -68,4 +68,35 @@ function getMe(req, res) {
   res.json({ user: req.user.toPublicJSON() });
 }
 
-module.exports = { register, login, getMe };
+async function updateMe(req, res) {
+  try {
+    const { name, phone, city } = req.body;
+    const user = await User.findById(req.user._id);
+
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    if (name !== undefined) {
+      if (!name?.trim()) {
+        return res.status(400).json({ message: "Name is required" });
+      }
+      user.name = name.trim();
+    }
+
+    if (phone !== undefined) {
+      user.phone = phone.trim();
+    }
+
+    if (city !== undefined) {
+      user.city = city.trim();
+    }
+
+    await user.save();
+    res.json({ user: user.toPublicJSON() });
+  } catch (error) {
+    res.status(500).json({ message: getAuthErrorMessage(error) });
+  }
+}
+
+module.exports = { register, login, getMe, updateMe };
