@@ -8,11 +8,20 @@ const sellerVerificationRoutes = require("./routes/sellerVerificationRoutes");
 const adminSellerVerificationRoutes = require("./routes/adminSellerVerificationRoutes");
 const listingRoutes = require("./routes/listingRoutes");
 const adminListingRoutes = require("./routes/adminListingRoutes");
+
+// Your existing routes
 const wishlistRoutes = require("./routes/wishlistRoutes");
 const publicListingRoutes = require("./routes/publicListingRoutes");
 const messageRoutes = require("./routes/messageRoutes");
 const bidRoutes = require("./routes/bidRoutes");
 const reviewRoutes = require("./routes/reviewRoutes");
+
+// New routes from GitHub
+const catalogRoutes = require("./routes/catalogRoutes");
+const buyerOrderRoutes = require("./routes/buyerOrderRoutes");
+const sellerOrderRoutes = require("./routes/sellerOrderRoutes");
+const reportRoutes = require("./routes/reportRoutes");
+const adminReportRoutes = require("./routes/adminReportRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5002;
@@ -49,16 +58,26 @@ app.use("/api/seller/verification", sellerVerificationRoutes);
 app.use("/api/admin/seller-verifications", adminSellerVerificationRoutes);
 app.use("/api/seller/listings", listingRoutes);
 app.use("/api/admin/listings", adminListingRoutes);
+
+// Your existing routes
 app.use("/api/wishlist", wishlistRoutes);
 app.use("/api/listings", publicListingRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/bids", bidRoutes);
 app.use("/api/reviews", reviewRoutes);
 
+// New routes from GitHub
+app.use("/api/catalog", catalogRoutes);
+app.use("/api/buyer/orders", buyerOrderRoutes);
+app.use("/api/seller/orders", sellerOrderRoutes);
+app.use("/api/reports", reportRoutes);
+app.use("/api/admin/reports", adminReportRoutes);
+
 app.use((error, req, res, next) => {
   if (error?.type === "entity.too.large") {
     return res.status(413).json({
-      message: "Images are too large. Use smaller JPG/PNG files (under 4MB each) and try again.",
+      message:
+        "Images are too large. Use smaller JPG/PNG files (under 4MB each) and try again.",
     });
   }
   next(error);
