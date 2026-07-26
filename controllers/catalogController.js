@@ -14,9 +14,15 @@ const CATEGORY_PATH = {
 
 function mapPublicListing(product) {
   const seller = product.sellerId;
+  const sellerId =
+    seller && typeof seller === "object"
+      ? seller._id?.toString?.() ?? String(seller._id)
+      : product.sellerId?.toString?.() ?? product.sellerId;
 
   return {
     ...product.toPublicJSON(),
+    id: product._id.toString(),
+    sellerId: sellerId ? String(sellerId) : null,
     categoryPath: CATEGORY_PATH[product.mainCategory] ?? "/categories",
     sellerName: seller?.name || "Relux Seller",
     seller: seller?.name || "Relux Seller",

@@ -10,7 +10,7 @@ function getAuthErrorMessage(error) {
 
 async function register(req, res) {
   try {
-    const { name, email, password, role } = req.body;
+    const { name, email, password } = req.body;
 
     if (!name?.trim() || !email?.trim() || !password) {
       return res.status(400).json({ message: "Name, email, and password are required" });
@@ -18,6 +18,15 @@ async function register(req, res) {
 
     if (password.length < 6) {
       return res.status(400).json({ message: "Password must be at least 6 characters" });
+    }
+
+    // Signup can only create buyers. Sellers must go through seller verification
+    // (CNIC, phone, city) and admin approval — never via /auth/register.
+    if (req.body.role && req.body.role !== "buyer") {
+      return res.status(400).json({
+        message:
+          "Seller accounts cannot be created from signup. Use Become a Seller and submit verification.",
+      });
     }
 
     const exists = await User.findOne({ email: email.toLowerCase().trim() });
@@ -29,8 +38,8 @@ async function register(req, res) {
       name: name.trim(),
       email: email.toLowerCase().trim(),
       password,
-      role: role === "seller" ? "seller" : "buyer",
-      status: role === "seller" ? "pending" : "active",
+      role: "buyer",
+      status: "active",
     });
 
     const token = signToken(user);
