@@ -24,7 +24,7 @@ function formatPrice(listing) {
 
 function mapListingForAdmin(listing) {
   const seller = listing.sellerId;
-  if (!seller) return null;
+  const sellerName = seller?.name || "Unknown seller";
 
   const verificationStatus = listing.verificationStatus;
   const displayStatus =
@@ -38,9 +38,9 @@ function mapListingForAdmin(listing) {
     id: listing._id.toString(),
     title: listing.title,
     image: listing.mainImage,
-    sellerInitials: getInitials(seller.name),
-    sellerName: seller.name,
-    sellerFullName: seller.name,
+    sellerInitials: getInitials(sellerName),
+    sellerName,
+    sellerFullName: sellerName,
     sellerAvatar: null,
     sellerRating: 0,
     sellerReviews: 0,
@@ -59,9 +59,9 @@ function mapListingForAdmin(listing) {
     style: listing.style,
     adminNote: listing.adminNote,
     appliedAt: listing.createdAt?.toISOString().slice(0, 10),
-    sellerEmail: seller.email,
-    sellerPhone: seller.phone || "Not provided",
-    sellerCity: seller.city || "Not provided",
+    sellerEmail: seller?.email || "Not linked",
+    sellerPhone: seller?.phone || "Not provided",
+    sellerCity: seller?.city || "Not provided",
   };
 }
 
@@ -82,7 +82,7 @@ async function listListings(req, res) {
       .populate("sellerId", "name email phone city role status")
       .sort({ createdAt: -1 });
 
-    const mapped = listings.map(mapListingForAdmin).filter(Boolean);
+    const mapped = listings.map(mapListingForAdmin);
     const weekAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
 
     const [pendingReview, approvedThisWeek, rejectedThisWeek] = await Promise.all([
