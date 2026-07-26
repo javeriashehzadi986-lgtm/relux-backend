@@ -1,0 +1,58 @@
+const Product = require("../models/Product");
+
+function getErrorMessage(error) {
+  if (error.message?.includes("bad auth")) {
+    return "Database connection failed. Restart the backend server and check MongoDB password in .env";
+  }
+  return error.message || "Something went wrong";
+}
+
+const publicListingFilter = {
+  verificationStatus: "approved",
+  status: "active",
+};
+
+async function listPublicListings(req, res) {
+  try {
+    const { category } = req.query;
+    const filter = { ...publicListingFilter };
+
+    if (category) {
+      const normalized =
+        category.toLowerCase() === "female"
+          ? "Female"
+          : category.toLowerCase() === "male"
+            ? "Male"
+            : category.toLowerCase() === "kids"
+              ? "Kids"
+              : null;
+      if (normalized) {
+        filter.mainCategory = normalized;
+      }
+    }
+
+    const listings = await Product.find(filter).sort({ createdAt: -1 });
+    res.json({ listings: listings.map((listing) => listing.toPublicJSON()) });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
+async function getPublicListing(req, res) {
+  try {
+    const listing = await Product.findOne({
+      _id: req.params.id,
+      ...publicListingFilter,
+    });
+
+    if (!listing) {
+      return res.status(404).json({ message: "Listing not found" });
+    }
+
+    res.json({ listing: listing.toPublicJSON() });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
+module.exports = { listPublicListings, getPublicListing };

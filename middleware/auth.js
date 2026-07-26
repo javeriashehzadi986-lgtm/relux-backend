@@ -26,6 +26,23 @@ async function protect(req, res, next) {
   }
 }
 
+async function optionalProtect(req, res, next) {
+  const header = req.headers.authorization;
+  if (!header?.startsWith("Bearer ")) {
+    return next();
+  }
+
+  try {
+    const token = header.split(" ")[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = await User.findById(decoded.id).select("-password");
+  } catch {
+    req.user = null;
+  }
+
+  next();
+}
+
 function authorize(...roles) {
   return (req, res, next) => {
     if (!req.user) {
@@ -38,4 +55,4 @@ function authorize(...roles) {
   };
 }
 
-module.exports = { signToken, protect, authorize, JWT_SECRET };
+module.exports = { signToken, protect, optionalProtect, authorize, JWT_SECRET };

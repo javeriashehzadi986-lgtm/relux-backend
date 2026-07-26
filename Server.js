@@ -8,6 +8,11 @@ const sellerVerificationRoutes = require("./routes/sellerVerificationRoutes");
 const adminSellerVerificationRoutes = require("./routes/adminSellerVerificationRoutes");
 const listingRoutes = require("./routes/listingRoutes");
 const adminListingRoutes = require("./routes/adminListingRoutes");
+const wishlistRoutes = require("./routes/wishlistRoutes");
+const publicListingRoutes = require("./routes/publicListingRoutes");
+const messageRoutes = require("./routes/messageRoutes");
+const bidRoutes = require("./routes/bidRoutes");
+const reviewRoutes = require("./routes/reviewRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5002;
@@ -44,6 +49,11 @@ app.use("/api/seller/verification", sellerVerificationRoutes);
 app.use("/api/admin/seller-verifications", adminSellerVerificationRoutes);
 app.use("/api/seller/listings", listingRoutes);
 app.use("/api/admin/listings", adminListingRoutes);
+app.use("/api/wishlist", wishlistRoutes);
+app.use("/api/listings", publicListingRoutes);
+app.use("/api/messages", messageRoutes);
+app.use("/api/bids", bidRoutes);
+app.use("/api/reviews", reviewRoutes);
 
 app.use((error, req, res, next) => {
   if (error?.type === "entity.too.large") {
