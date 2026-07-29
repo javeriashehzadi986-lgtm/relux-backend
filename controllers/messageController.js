@@ -3,6 +3,7 @@ const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const Product = require("../models/Product");
 const User = require("../models/User");
+const { notifyNewMessage } = require("../services/notificationService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -386,6 +387,18 @@ async function sendMessage(req, res) {
 
     await conversation.save();
 
+    const recipientId = isBuyer
+      ? conversation.sellerId?._id ?? conversation.sellerId
+      : conversation.buyerId?._id ?? conversation.buyerId;
+
+    notifyNewMessage({
+      userId: recipientId,
+      senderName: req.user.name,
+      preview: text.length > 120 ? `${text.slice(0, 117)}...` : text,
+      conversationId: conversation._id,
+      listingTitle: conversation.listingTitle,
+    });
+
     res.status(201).json({
       message: mapMessageForUser(message, req.user._id),
     });
@@ -527,6 +540,26 @@ async function blockConversation(req, res) {
   }
 }
 
+async function getUnreadCount(req, res) {
+  try {
+    const isSeller = req.user.role === "seller";
+    const filter = isSeller ? { sellerId: req.user._id } : { buyerId: req.user._id };
+    const conversations = await Conversation.find(filter).select(
+      isSeller ? "unreadSeller" : "unreadBuyer",
+    );
+
+    const unreadCount = conversations.reduce(
+      (total, conversation) =>
+        total + (isSeller ? conversation.unreadSeller : conversation.unreadBuyer),
+      0,
+    );
+
+    res.json({ unreadCount });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
 module.exports = {
   listConversations,
   getConversation,
@@ -537,4 +570,5 @@ module.exports = {
   toggleConversationMute,
   clearConversationMessages,
   blockConversation,
+  getUnreadCount,
 };

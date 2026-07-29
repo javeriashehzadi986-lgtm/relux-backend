@@ -1,5 +1,9 @@
 const User = require("../models/User");
 const SellerVerification = require("../models/SellerVerification");
+const {
+  notifySellerApproved,
+  notifySellerRejected,
+} = require("../services/notificationService");
 
 function mapApplication(verification) {
   const user = verification.userId;
@@ -77,6 +81,8 @@ async function approveApplication(req, res) {
     await verification.save();
     await user.save();
 
+    notifySellerApproved({ sellerId: user._id });
+
     res.json({
       message: "Seller approved successfully",
       application: mapApplication(await verification.populate("userId", "name email phone city role status")),
@@ -106,6 +112,8 @@ async function rejectApplication(req, res) {
 
     await verification.save();
     await user.save();
+
+    notifySellerRejected({ sellerId: user._id });
 
     res.json({
       message: "Seller application rejected",
