@@ -33,15 +33,29 @@ function mapPublicListing(product) {
 async function getPublicListings(req, res) {
   try {
     const slug = req.query.category;
+    const type = String(req.query.type ?? "").trim().toLowerCase();
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 0, 0), 24);
     const query = { verificationStatus: "approved", status: "active" };
 
     if (slug && CATEGORY_BY_SLUG[slug]) {
       query.mainCategory = CATEGORY_BY_SLUG[slug];
     }
 
-    const listings = await Product.find(query)
+    if (type === "rent") {
+      query.listingType = "rent";
+    } else if (type === "sale" || type === "resale") {
+      query.listingType = "sale";
+    }
+
+    let listingQuery = Product.find(query)
       .populate("sellerId", "name city")
       .sort({ createdAt: -1 });
+
+    if (limit > 0) {
+      listingQuery = listingQuery.limit(limit);
+    }
+
+    const listings = await listingQuery;
 
     res.json({ listings: listings.map(mapPublicListing) });
   } catch (error) {

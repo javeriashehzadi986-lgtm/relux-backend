@@ -10,6 +10,7 @@ const {
   toggleConversationMute,
   clearConversationMessages,
   blockConversation,
+  getUnreadCount,
 } = require("../controllers/messageController");
 
 const router = express.Router();
@@ -17,6 +18,7 @@ const router = express.Router();
 router.use(protect);
 
 router.get("/conversations", listConversations);
+router.get("/unread-count", getUnreadCount);
 router.post("/conversations/open", openConversation);
 router.patch("/conversations/read-all", markAllConversationsRead);
 router.get("/conversations/:id", getConversation);

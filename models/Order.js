@@ -1,7 +1,19 @@
 const mongoose = require("mongoose");
 
+function generateOrderId() {
+  const stamp = Date.now().toString(36).toUpperCase();
+  const suffix = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `RH-${stamp}${suffix}`;
+}
+
 const orderSchema = new mongoose.Schema(
   {
+    orderId: {
+      type: String,
+      unique: true,
+      trim: true,
+      index: true,
+    },
     buyerId: {
       type: mongoose.Schema.Types.ObjectId,
       ref: "User",
@@ -41,6 +53,12 @@ const orderSchema = new mongoose.Schema(
   { timestamps: true },
 );
 
+orderSchema.pre("validate", function assignOrderId() {
+  if (!this.orderId) {
+    this.orderId = generateOrderId();
+  }
+});
+
 function formatRentalPeriod(start, end) {
   if (!start || !end) return null;
   const format = (iso) =>
@@ -70,6 +88,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   if (this.status === "cancelled" || this.status === "rejected") {
     return {
       id,
+      orderId: this.orderId,
       dressId,
       buyerId: this.buyerId?.toString?.() ?? this.buyerId,
       sellerId: this.sellerId?.toString?.() ?? this.sellerId,
@@ -97,6 +116,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   if (this.status === "pending") {
     return {
       id,
+      orderId: this.orderId,
       dressId,
       buyerId: this.buyerId?.toString?.() ?? this.buyerId,
       sellerId: this.sellerId?.toString?.() ?? this.sellerId,
@@ -127,6 +147,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   if (this.status === "approved") {
     return {
       id,
+      orderId: this.orderId,
       dressId,
       buyerId: this.buyerId?.toString?.() ?? this.buyerId,
       sellerId: this.sellerId?.toString?.() ?? this.sellerId,
@@ -161,6 +182,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   // completed
   return {
     id,
+    orderId: this.orderId,
     dressId,
     buyerId: this.buyerId?.toString?.() ?? this.buyerId,
     sellerId: this.sellerId?.toString?.() ?? this.sellerId,
@@ -199,6 +221,7 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
 
   const base = {
     id,
+    orderId: this.orderId,
     dressId,
     buyerId: buyer?._id?.toString?.() ?? buyer?.toString?.() ?? this.buyerId,
     sellerId: this.sellerId?._id?.toString?.() ?? this.sellerId?.toString?.() ?? this.sellerId,

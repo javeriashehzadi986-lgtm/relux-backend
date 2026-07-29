@@ -1,4 +1,10 @@
 const Order = require("../models/Order");
+const Product = require("../models/Product");
+const {
+  notifyBookingConfirmed,
+  notifyBookingRejected,
+  notifyRentalCompleted,
+} = require("../services/notificationService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -42,6 +48,13 @@ async function approveOrder(req, res) {
     order.status = "approved";
     await order.save();
 
+    const product = await Product.findById(order.productId).select("title");
+    notifyBookingConfirmed({
+      buyerId: order.buyerId,
+      productTitle: product?.title ?? "your dress",
+      orderId: order._id,
+    });
+
     res.json({ message: "Request approved", order: order.toSellerJSON() });
   } catch (error) {
     res.status(500).json({ message: getErrorMessage(error) });
@@ -65,6 +78,12 @@ async function rejectOrder(req, res) {
     order.status = "rejected";
     await order.save();
 
+    const product = await Product.findById(order.productId).select("title");
+    notifyBookingRejected({
+      buyerId: order.buyerId,
+      productTitle: product?.title ?? "your dress",
+    });
+
     res.json({ message: "Request rejected" });
   } catch (error) {
     res.status(500).json({ message: getErrorMessage(error) });
@@ -87,6 +106,12 @@ async function completeOrder(req, res) {
 
     order.status = "completed";
     await order.save();
+
+    const product = await Product.findById(order.productId).select("title");
+    notifyRentalCompleted({
+      buyerId: order.buyerId,
+      productTitle: product?.title ?? "your dress",
+    });
 
     res.json({ message: "Order completed", order: order.toSellerJSON() });
   } catch (error) {
