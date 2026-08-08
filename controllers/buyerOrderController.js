@@ -1,7 +1,14 @@
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const {
+  notifyRentalRequest,
+  notifyRentalCancelled,
+} = require("../services/notificationService");
 
 function getErrorMessage(error) {
+  if (error.code === 11000) {
+    return "Could not save this order. Please try again.";
+  }
   if (error.message?.includes("bad auth")) {
     return "Database connection failed. Restart the backend server and check MongoDB password in .env";
   }
@@ -80,6 +87,12 @@ async function createRentalRequest(req, res) {
       });
     }
 
+    notifyRentalRequest({
+      sellerId: product.sellerId,
+      productTitle: product.title,
+      orderId: order._id,
+    });
+
     res.status(201).json({
       message: "Rental request submitted",
       order: order.toBuyerJSON(),
@@ -135,6 +148,14 @@ async function cancelMyOrder(req, res) {
 
     order.status = "cancelled";
     await order.save();
+
+    const product = await Product.findById(order.productId).select("title sellerId");
+    if (product) {
+      notifyRentalCancelled({
+        sellerId: product.sellerId,
+        productTitle: product.title,
+      });
+    }
 
     res.json({ message: "Request cancelled", order: order.toBuyerJSON() });
   } catch (error) {

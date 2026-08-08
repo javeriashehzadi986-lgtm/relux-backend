@@ -2,6 +2,10 @@ const mongoose = require("mongoose");
 const Bid = require("../models/Bid");
 const Product = require("../models/Product");
 const User = require("../models/User");
+const {
+  notifyNewBid,
+  notifyOutbid,
+} = require("../services/notificationService");
 
 const PUBLIC_LISTING_FILTER = {
   verificationStatus: "approved",
@@ -271,6 +275,21 @@ async function placeBid(req, res) {
       productId: product._id,
       amount,
     });
+
+    notifyNewBid({
+      sellerId: product.sellerId,
+      productTitle: product.title,
+      productId: product._id,
+      amountFormatted: formatRs(amount),
+    });
+
+    if (highestBid && String(highestBid.userId) !== String(req.user._id)) {
+      notifyOutbid({
+        buyerId: highestBid.userId,
+        productTitle: product.title,
+        productId: product._id,
+      });
+    }
 
     const summary = await buildAuctionSummary(product, req.user._id);
     const history = await buildBidHistory(product._id);

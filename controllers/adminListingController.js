@@ -1,4 +1,8 @@
 const Product = require("../models/Product");
+const {
+  notifyListingApproved,
+  notifyListingRejected,
+} = require("../services/notificationService");
 
 const CATEGORY_SLUG = {
   Female: "female",
@@ -121,6 +125,13 @@ async function approveListing(req, res) {
     listing.adminNote = "";
     await listing.save();
 
+    const sellerId = listing.sellerId?._id ?? listing.sellerId;
+    notifyListingApproved({
+      sellerId,
+      productTitle: listing.title,
+      productId: listing._id,
+    });
+
     res.json({
       message: "Listing approved successfully",
       listing: mapListingForAdmin(listing),
@@ -145,6 +156,12 @@ async function rejectListing(req, res) {
     listing.reviewedAt = new Date();
     listing.adminNote = req.body?.adminNote?.trim() || "Listing rejected by admin";
     await listing.save();
+
+    const sellerId = listing.sellerId?._id ?? listing.sellerId;
+    notifyListingRejected({
+      sellerId,
+      productTitle: listing.title,
+    });
 
     res.json({
       message: "Listing rejected",

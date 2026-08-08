@@ -17,6 +17,26 @@ async function removeLegacyProductIndexes() {
   }
 }
 
+async function backfillMissingOrderIds() {
+  try {
+    const Order = require("../models/Order");
+    const orders = await Order.find({
+      $or: [{ orderId: null }, { orderId: "" }, { orderId: { $exists: false } }],
+    }).limit(200);
+
+    if (!orders.length) return;
+
+    for (const order of orders) {
+      order.orderId = undefined;
+      await order.save();
+    }
+
+    console.log(`Backfilled orderId for ${orders.length} legacy order(s)`);
+  } catch (error) {
+    console.warn("Could not backfill legacy order ids:", error.message);
+  }
+}
+
 const connectDB = async () => {
   const mongoUrl = process.env.MONGODB_URL;
 
@@ -32,6 +52,7 @@ const connectDB = async () => {
     console.log(`MongoDB connected: ${conn.connection.host}`);
     console.log(`Database: ${conn.connection.name}`);
     await removeLegacyProductIndexes();
+    await backfillMissingOrderIds();
   } catch (error) {
     console.error("MongoDB connection error:", error.message);
     process.exit(1);
