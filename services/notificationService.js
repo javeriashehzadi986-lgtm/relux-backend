@@ -173,6 +173,30 @@ function notifyNewMessage({
   });
 }
 
+function iconForPriority(priority) {
+  if (priority === "urgent") return "muted";
+  if (priority === "important") return "secondary";
+  return "primary";
+}
+
+async function notifyBroadcast({ userIds, title, message, priority }) {
+  const uniqueIds = [...new Set((userIds || []).map(toUserId).filter(Boolean))];
+  if (!uniqueIds.length) return 0;
+
+  const docs = uniqueIds.map((userId) => ({
+    userId,
+    title,
+    message,
+    highlight: "Relux Hub",
+    category: "system",
+    iconVariant: iconForPriority(priority),
+    link: "/notification",
+  }));
+
+  const created = await Notification.insertMany(docs);
+  return created.length;
+}
+
 module.exports = {
   createNotification,
   notifyUser,
@@ -188,4 +212,5 @@ module.exports = {
   notifyNewBid,
   notifyOutbid,
   notifyNewMessage,
+  notifyBroadcast,
 };

@@ -23,6 +23,8 @@ const adminOrderRoutes = require("./routes/adminOrderRoutes");
 const contactRoutes = require("./routes/contactRoutes");
 const adminContactRoutes = require("./routes/adminContactRoutes");
 const notificationRoutes = require("./routes/notificationRoutes");
+const adminNotificationRoutes = require("./routes/adminNotificationRoutes");
+const adminCategoryRoutes = require("./routes/adminCategoryRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5002;
@@ -74,6 +76,8 @@ app.use("/api/admin/orders", adminOrderRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin/contact", adminContactRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/admin/notifications", adminNotificationRoutes);
+app.use("/api/admin/categories", adminCategoryRoutes);
 
 app.use((error, req, res, next) => {
   if (error?.type === "entity.too.large") {
