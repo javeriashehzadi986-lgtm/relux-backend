@@ -118,7 +118,8 @@ async function createSellerReview(req, res) {
       authorName: authorName || req.user.name || "Verified Buyer",
       reportReason,
       reportDetails,
-      status: hasReport ? "flagged" : "active",
+      // Keep reviews visible on the seller page; admins review reports separately.
+      status: "active",
     });
 
     const allActiveReviews = await SellerReview.find({

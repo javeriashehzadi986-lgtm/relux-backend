@@ -58,7 +58,7 @@ sellerReviewSchema.index({ sellerId: 1, createdAt: -1 });
 
 sellerReviewSchema.methods.toPublicJSON = function toPublicJSON() {
   return {
-    id: this._id,
+    id: this._id.toString(),
     sellerId: this.sellerId,
     productId: this.productId,
     rating: this.rating,
