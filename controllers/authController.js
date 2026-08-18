@@ -66,6 +66,9 @@ async function login(req, res) {
       return res.status(403).json({ message: "Account suspended" });
     }
 
+    user.lastLoginAt = new Date();
+    await user.save();
+
     const token = signToken(user);
     res.json({ token, user: user.toPublicJSON() });
   } catch (error) {
@@ -79,7 +82,7 @@ function getMe(req, res) {
 
 async function updateMe(req, res) {
   try {
-    const { name, phone, city } = req.body;
+    const { name, phone, city, twoFactorEnabled, notificationPrefs } = req.body;
     const user = await User.findById(req.user._id);
 
     if (!user) {
@@ -101,6 +104,20 @@ async function updateMe(req, res) {
       user.city = city.trim();
     }
 
+    if (twoFactorEnabled !== undefined) {
+      user.twoFactorEnabled = Boolean(twoFactorEnabled);
+    }
+
+    if (notificationPrefs !== undefined && typeof notificationPrefs === "object") {
+      const allowed = ["email", "sellerVerification", "reports", "support"];
+      for (const key of allowed) {
+        if (typeof notificationPrefs[key] === "boolean") {
+          user.notificationPrefs[key] = notificationPrefs[key];
+        }
+      }
+      user.markModified("notificationPrefs");
+    }
+
     await user.save();
     res.json({ user: user.toPublicJSON() });
   } catch (error) {
@@ -108,4 +125,60 @@ async function updateMe(req, res) {
   }
 }
 
-module.exports = { register, login, getMe, updateMe };
+async function updateEmail(req, res) {
+  try {
+    const email = String(req.body.email ?? "").trim().toLowerCase();
+    const password = req.body.password;
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+    if (!password) {
+      return res.status(400).json({ message: "Current password is required" });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    if (!(await user.comparePassword(password))) {
+      return res.status(401).json({ message: "Current password is incorrect" });
+    }
+
+    const exists = await User.findOne({ email, _id: { $ne: user._id } });
+    if (exists) {
+      return res.status(409).json({ message: "Email already in use" });
+    }
+
+    user.email = email;
+    await user.save();
+    res.json({ message: "Email updated", user: user.toPublicJSON() });
+  } catch (error) {
+    res.status(500).json({ message: getAuthErrorMessage(error) });
+  }
+}
+
+async function deactivateMe(req, res) {
+  try {
+    const password = req.body.password;
+    if (!password) {
+      return res.status(400).json({ message: "Password is required to deactivate" });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    if (!(await user.comparePassword(password))) {
+      return res.status(401).json({ message: "Password is incorrect" });
+    }
+
+    user.status = "suspended";
+    await user.save();
+    res.json({ message: "Account deactivated" });
+  } catch (error) {
+    res.status(500).json({ message: getAuthErrorMessage(error) });
+  }
+}
+
+module.exports = { register, login, getMe, updateMe, updateEmail, deactivateMe };

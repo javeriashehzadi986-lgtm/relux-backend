@@ -18,13 +18,14 @@ const buyerOrderRoutes = require("./routes/buyerOrderRoutes");
 const sellerOrderRoutes = require("./routes/sellerOrderRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 const adminReportRoutes = require("./routes/adminReportRoutes");
+const notificationRoutes = require("./routes/notificationRoutes");
 const adminUserRoutes = require("./routes/adminUserRoutes");
 const adminOrderRoutes = require("./routes/adminOrderRoutes");
 const contactRoutes = require("./routes/contactRoutes");
 const adminContactRoutes = require("./routes/adminContactRoutes");
-const notificationRoutes = require("./routes/notificationRoutes");
 const adminNotificationRoutes = require("./routes/adminNotificationRoutes");
 const adminCategoryRoutes = require("./routes/adminCategoryRoutes");
+const adminReviewRoutes = require("./routes/adminReviewRoutes");
 
 const app = express();
 const PORT = process.env.PORT || 5002;
@@ -75,6 +76,7 @@ app.use("/api/admin/users", adminUserRoutes);
 app.use("/api/admin/orders", adminOrderRoutes);
 app.use("/api/contact", contactRoutes);
 app.use("/api/admin/contact", adminContactRoutes);
+app.use("/api/admin/reviews", adminReviewRoutes);
 app.use("/api/notifications", notificationRoutes);
 app.use("/api/admin/notifications", adminNotificationRoutes);
 app.use("/api/admin/categories", adminCategoryRoutes);
@@ -82,7 +84,8 @@ app.use("/api/admin/categories", adminCategoryRoutes);
 app.use((error, req, res, next) => {
   if (error?.type === "entity.too.large") {
     return res.status(413).json({
-      message: "Images are too large. Use smaller JPG/PNG files (under 4MB each) and try again.",
+      message:
+        "Images are too large. Use smaller JPG/PNG files (under 4MB each) and try again.",
     });
   }
   next(error);
