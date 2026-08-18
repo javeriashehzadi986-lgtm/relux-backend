@@ -10,6 +10,14 @@ const userSchema = new mongoose.Schema(
     city: { type: String, trim: true, default: "" },
     role: { type: String, enum: ["buyer", "seller", "admin"], default: "buyer" },
     status: { type: String, enum: ["active", "pending", "rejected", "suspended"], default: "active" },
+    lastLoginAt: { type: Date, default: null },
+    twoFactorEnabled: { type: Boolean, default: false },
+    notificationPrefs: {
+      email: { type: Boolean, default: true },
+      sellerVerification: { type: Boolean, default: true },
+      reports: { type: Boolean, default: false },
+      support: { type: Boolean, default: true },
+    },
   },
   { timestamps: true },
 );
@@ -32,6 +40,16 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     status: this.status,
     phone: this.phone,
     city: this.city,
+    lastLoginAt: this.lastLoginAt,
+    createdAt: this.createdAt,
+    updatedAt: this.updatedAt,
+    twoFactorEnabled: Boolean(this.twoFactorEnabled),
+    notificationPrefs: {
+      email: this.notificationPrefs?.email !== false,
+      sellerVerification: this.notificationPrefs?.sellerVerification !== false,
+      reports: Boolean(this.notificationPrefs?.reports),
+      support: this.notificationPrefs?.support !== false,
+    },
   };
 };
 
