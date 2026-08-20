@@ -82,7 +82,7 @@ function getMe(req, res) {
 
 async function updateMe(req, res) {
   try {
-    const { name, phone, city, twoFactorEnabled, notificationPrefs } = req.body;
+    const { name, phone, city, address, twoFactorEnabled, notificationPrefs } = req.body;
     const user = await User.findById(req.user._id);
 
     if (!user) {
@@ -102,6 +102,10 @@ async function updateMe(req, res) {
 
     if (city !== undefined) {
       user.city = city.trim();
+    }
+
+    if (address !== undefined) {
+      user.address = address.trim();
     }
 
     if (twoFactorEnabled !== undefined) {

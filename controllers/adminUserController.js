@@ -31,6 +31,7 @@ async function toAdminUserJSON(user, ordersCount = 0) {
     avatar: null,
     phone: user.phone || "Not provided",
     city: user.city || "Not provided",
+    address: user.address || "Not provided",
     verified,
   };
 }
