@@ -1,29 +1,24 @@
 const Product = require("../models/Product");
+const {
+  resolveMainBySlug,
+  buildNameToSlugMap,
+  categoryPathForSlug,
+} = require("../utils/categoryResolve");
 
-const CATEGORY_BY_SLUG = {
-  female: "Female",
-  male: "Male",
-  kids: "Kids",
-};
-
-const CATEGORY_PATH = {
-  Female: "/femaleFashion",
-  Male: "/maleFashion",
-  Kids: "/kidsFashion",
-};
-
-function mapPublicListing(product) {
+function mapPublicListing(product, nameToSlug) {
   const seller = product.sellerId;
   const sellerId =
     seller && typeof seller === "object"
       ? seller._id?.toString?.() ?? String(seller._id)
       : product.sellerId?.toString?.() ?? product.sellerId;
 
+  const slug = nameToSlug[product.mainCategory];
+
   return {
     ...product.toPublicJSON(),
     id: product._id.toString(),
     sellerId: sellerId ? String(sellerId) : null,
-    categoryPath: CATEGORY_PATH[product.mainCategory] ?? "/categories",
+    categoryPath: categoryPathForSlug(slug),
     sellerName: seller?.name || "Relux Seller",
     seller: seller?.name || "Relux Seller",
     updatedAt: product.updatedAt,
@@ -37,8 +32,11 @@ async function getPublicListings(req, res) {
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 0, 0), 24);
     const query = { verificationStatus: "approved", status: "active" };
 
-    if (slug && CATEGORY_BY_SLUG[slug]) {
-      query.mainCategory = CATEGORY_BY_SLUG[slug];
+    if (slug) {
+      const main = await resolveMainBySlug(slug);
+      if (main?.name) {
+        query.mainCategory = main.name;
+      }
     }
 
     if (type === "rent") {
@@ -56,8 +54,10 @@ async function getPublicListings(req, res) {
     }
 
     const listings = await listingQuery;
+    const nameToSlug = await buildNameToSlugMap();
+    const mapped = listings.map((item) => mapPublicListing(item, nameToSlug));
 
-    res.json({ listings: listings.map(mapPublicListing) });
+    res.json({ listings: mapped });
   } catch (error) {
     res.status(500).json({ message: error.message || "Failed to load catalog" });
   }
@@ -75,7 +75,8 @@ async function getPublicListing(req, res) {
       return res.status(404).json({ message: "Listing not found" });
     }
 
-    res.json({ listing: mapPublicListing(product) });
+    const nameToSlug = await buildNameToSlugMap();
+    res.json({ listing: mapPublicListing(product, nameToSlug) });
   } catch (error) {
     res.status(500).json({ message: error.message || "Failed to load listing" });
   }

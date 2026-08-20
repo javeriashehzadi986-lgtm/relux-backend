@@ -34,16 +34,34 @@ const DEFAULT_CATEGORIES = [
   },
 ];
 
-const SHARED_SUBS = [
+const BASE_SUBS = [
   { name: "Casual Wear", productStyleKey: "Casual", sortOrder: 1 },
   { name: "Formal Wear", productStyleKey: "Formal", sortOrder: 2 },
   { name: "Party Wear", productStyleKey: "Party", sortOrder: 3 },
   { name: "Traditional Wear", productStyleKey: "Traditional", sortOrder: 4 },
   { name: "Winter Wear", productStyleKey: "Winter Wear", sortOrder: 5 },
+  { name: "Sports Wear", productStyleKey: "Sports Wear", sortOrder: 6 },
+  { name: "Summer Wear", productStyleKey: "Summer Wear", sortOrder: 7 },
 ];
 
+function getSharedSubsForParent(parentSlug) {
+  if (parentSlug === "male") {
+    return [
+      ...BASE_SUBS,
+      { name: "Groom Wear", productStyleKey: "Groom", sortOrder: 8 },
+    ];
+  }
+  if (parentSlug === "female") {
+    return [
+      ...BASE_SUBS,
+      { name: "Bridal Wear", productStyleKey: "Bridal", sortOrder: 8 },
+    ];
+  }
+  return BASE_SUBS;
+}
+
 const DEFAULT_SUBS = ["male", "female", "kids"].flatMap((parentSlug) =>
-  SHARED_SUBS.map((item) => ({ ...item, parentSlug })),
+  getSharedSubsForParent(parentSlug).map((item) => ({ ...item, parentSlug })),
 );
 
 const PLACEHOLDER_IMAGE =
@@ -93,6 +111,14 @@ function resolveCategoryType(item) {
 function inferStyleKeyFromName(name) {
   const match = DEFAULT_SUBS.find((item) => item.name === name);
   return match?.productStyleKey || "";
+}
+
+/** Free-form styles: "Ethnic Wear" → "Ethnic", or keep custom names as-is. */
+function suggestStyleKeyFromName(name = "") {
+  const known = inferStyleKeyFromName(name.trim());
+  if (known) return known;
+  const cleaned = name.trim().replace(/\s+wear$/i, "").trim();
+  return cleaned || name.trim();
 }
 
 function resolveParentSlug(item) {
@@ -152,41 +178,6 @@ async function repairLegacyCategories() {
   }
 }
 
-async function hasCompleteDefaults() {
-  const mainSlugs = await Category.distinct("slug", { type: "main" });
-  if (!DEFAULT_CATEGORIES.every((item) => mainSlugs.includes(item.slug))) {
-    return false;
-  }
-
-  const subCounts = await Category.aggregate([
-    { $match: { type: "sub", parentSlug: { $in: ["male", "female", "kids"] } } },
-    { $group: { _id: "$parentSlug", count: { $sum: 1 } } },
-  ]);
-  const countByParent = Object.fromEntries(subCounts.map((row) => [row._id, row.count]));
-  const subsPerMain = DEFAULT_SUBS.reduce((acc, item) => {
-    acc[item.parentSlug] = (acc[item.parentSlug] || 0) + 1;
-    return acc;
-  }, {});
-
-  return Object.entries(subsPerMain).every(
-    ([parentSlug, expectedCount]) => (countByParent[parentSlug] || 0) >= expectedCount,
-  );
-}
-
-async function dropConflictingIndexes() {
-  const indexes = await Category.collection.indexes();
-  for (const index of indexes) {
-    const keepsSlug = Boolean(index.key?.slug);
-    if (index.unique && index.name !== "_id_" && !keepsSlug) {
-      try {
-        await Category.collection.dropIndex(index.name);
-      } catch {
-        // Ignore missing/in-use index errors.
-      }
-    }
-  }
-}
-
 async function upsertCategory(fields) {
   const existing =
     (await Category.findOne({ slug: fields.slug })) ||
@@ -199,7 +190,12 @@ async function upsertCategory(fields) {
       : await Category.findOne({ name: fields.name, type: "main" }));
 
   if (existing) {
-    await Category.updateOne({ _id: existing._id }, { $set: fields });
+    // Never revive a soft-deleted category during seed/repair.
+    if (existing.isActive === false) {
+      return;
+    }
+    const { isActive, ...safeFields } = fields;
+    await Category.updateOne({ _id: existing._id }, { $set: safeFields });
     return;
   }
 
@@ -207,36 +203,6 @@ async function upsertCategory(fields) {
     await Category.create(fields);
   } catch (error) {
     if (error.code !== 11000) throw error;
-  }
-}
-
-async function syncDefaultCategories() {
-  await dropConflictingIndexes();
-
-  for (const item of DEFAULT_CATEGORIES) {
-    await upsertCategory({
-      name: item.name,
-      slug: item.slug,
-      type: "main",
-      parentSlug: null,
-      icon: item.icon,
-      iconVariant: item.iconVariant,
-      sortOrder: item.sortOrder,
-      isActive: true,
-    });
-  }
-
-  for (const item of DEFAULT_SUBS) {
-    await upsertCategory({
-      name: item.name,
-      slug: `${item.parentSlug}-${slugify(item.name)}`,
-      type: "sub",
-      parentSlug: item.parentSlug,
-      productStyleKey: item.productStyleKey,
-      sortOrder: item.sortOrder,
-      isActive: true,
-      imageUrl: PLACEHOLDER_IMAGE,
-    });
   }
 }
 
@@ -257,9 +223,41 @@ async function ensureDefaultCategories() {
       await repairLegacyCategories();
     }
 
-    const complete = await hasCompleteDefaults();
-    if (!complete) {
-      await syncDefaultCategories();
+    // Only create missing MAIN categories. Never re-add deleted subcategories.
+    for (const item of DEFAULT_CATEGORIES) {
+      const exists = await Category.findOne({ slug: item.slug, type: "main" });
+      if (!exists) {
+        await upsertCategory({
+          name: item.name,
+          slug: item.slug,
+          type: "main",
+          parentSlug: null,
+          icon: item.icon,
+          iconVariant: item.iconVariant,
+          sortOrder: item.sortOrder,
+          isActive: true,
+        });
+      }
+    }
+
+    // Seed default subs only on first setup (no sub docs at all for that parent).
+    // Soft-deleted subs still count, so deleted items are never auto-recreated.
+    for (const parentSlug of ["male", "female", "kids"]) {
+      const subCount = await Category.countDocuments({ type: "sub", parentSlug });
+      if (subCount > 0) continue;
+
+      for (const item of DEFAULT_SUBS.filter((sub) => sub.parentSlug === parentSlug)) {
+        await upsertCategory({
+          name: item.name,
+          slug: `${item.parentSlug}-${slugify(item.name)}`,
+          type: "sub",
+          parentSlug: item.parentSlug,
+          productStyleKey: item.productStyleKey,
+          sortOrder: item.sortOrder,
+          isActive: true,
+          imageUrl: PLACEHOLDER_IMAGE,
+        });
+      }
     }
   } catch (error) {
     console.error("Category seed skipped:", error.message);
@@ -286,6 +284,9 @@ async function getAllProductStats() {
     },
   ]);
 
+  const { buildNameToSlugMap } = require("../utils/categoryResolve");
+  const nameToSlug = await buildNameToSlugMap();
+
   const mainStats = {};
   const subStats = {};
 
@@ -293,7 +294,9 @@ async function getAllProductStats() {
     const mainCategory = row._id.mainCategory;
     const style = row._id.style;
     const listingType = row._id.listingType;
-    const mainSlug = Object.entries(MAIN_TO_PRODUCT).find(([, value]) => value === mainCategory)?.[0];
+    const mainSlug =
+      nameToSlug[mainCategory] ||
+      Object.entries(MAIN_TO_PRODUCT).find(([, value]) => value === mainCategory)?.[0];
 
     if (!mainSlug) continue;
 
@@ -324,7 +327,9 @@ function getStatsForSub(subStats, mainSlug, styleKey) {
 }
 
 async function getProductStats(mainSlug, styleKey) {
-  const mainCategory = MAIN_TO_PRODUCT[mainSlug];
+  const { resolveMainBySlug } = require("../utils/categoryResolve");
+  const main = await resolveMainBySlug(mainSlug);
+  const mainCategory = main?.name || MAIN_TO_PRODUCT[mainSlug];
   if (!mainCategory) {
     return { total: 0, sale: 0, rental: 0 };
   }
@@ -417,24 +422,21 @@ async function listCategories(req, res) {
     for (const main of mains) {
       const mainSlug = resolveCategorySlug(main);
       const dbSubs = subs.filter((sub) => resolveParentSlug(sub) === mainSlug);
-      const byStyle = new Map(
-        dbSubs.map((sub) => [sub.productStyleKey || inferStyleKeyFromName(sub.name), sub]),
-      );
 
-      subcategories[mainSlug] = SHARED_SUBS.map((template) => {
-        const doc = byStyle.get(template.productStyleKey);
-        return {
-          id: doc?._id?.toString() || `${mainSlug}-${slugify(template.name)}`,
-          slug: doc?.slug || `${mainSlug}-${slugify(template.name)}`,
-          name: template.name,
-          type: "sub",
-          parentSlug: mainSlug,
-          productStyleKey: template.productStyleKey,
-          sortOrder: template.sortOrder,
-          listings: getStatsForSub(subStats, mainSlug, template.productStyleKey),
-          image: doc?.imageUrl || PLACEHOLDER_IMAGE,
-        };
-      });
+      subcategories[mainSlug] = dbSubs
+        .map((sub) => ({
+          ...sub.toAdminJSON(),
+          listings: getStatsForSub(
+            subStats,
+            mainSlug,
+            sub.productStyleKey || inferStyleKeyFromName(sub.name),
+          ),
+          image: sub.imageUrl || PLACEHOLDER_IMAGE,
+        }))
+        .sort(
+          (a, b) =>
+            (a.sortOrder || 0) - (b.sortOrder || 0) || a.name.localeCompare(b.name),
+        );
     }
 
     res.json({
@@ -478,8 +480,30 @@ async function createCategory(req, res) {
       slug = `${parentSlug}-${slugify(name)}`;
     }
 
+    const resolvedStyleKey =
+      type === "sub"
+        ? productStyleKey?.trim() || suggestStyleKeyFromName(name)
+        : "";
+
     const exists = await Category.findOne({ slug });
     if (exists) {
+      if (exists.isActive === false) {
+        exists.isActive = true;
+        exists.name = name.trim();
+        if (type === "sub") {
+          exists.parentSlug = parentSlug;
+          exists.productStyleKey = resolvedStyleKey || exists.productStyleKey || "";
+          exists.imageUrl = imageUrl?.trim() || exists.imageUrl || PLACEHOLDER_IMAGE;
+        } else {
+          exists.icon = icon || exists.icon || "category";
+          exists.iconVariant = iconVariant || exists.iconVariant || "primary-dim";
+        }
+        await exists.save();
+        return res.status(201).json({
+          message: "Category restored",
+          category: exists.toAdminJSON(),
+        });
+      }
       return res.status(400).json({ message: "Category slug already exists" });
     }
 
@@ -491,7 +515,7 @@ async function createCategory(req, res) {
       icon: icon || "category",
       iconVariant: iconVariant || "primary-dim",
       imageUrl: imageUrl?.trim() || PLACEHOLDER_IMAGE,
-      productStyleKey: productStyleKey?.trim() || "",
+      productStyleKey: resolvedStyleKey,
       sortOrder: Number(req.body.sortOrder) || 0,
     });
 
@@ -535,29 +559,132 @@ async function updateCategory(req, res) {
 
 async function deleteCategory(req, res) {
   try {
-    const doc = await Category.findById(req.params.id);
+    let doc = null;
+    if (req.params.id && /^[a-fA-F0-9]{24}$/.test(req.params.id)) {
+      doc = await Category.findById(req.params.id);
+    }
+    if (!doc) {
+      doc = await Category.findOne({ slug: req.params.id });
+    }
     if (!doc) {
       return res.status(404).json({ message: "Category not found" });
     }
 
     if (doc.type === "main") {
-      const childCount = await Category.countDocuments({ parentSlug: doc.slug, type: "sub" });
+      const childCount = await Category.countDocuments({
+        parentSlug: doc.slug,
+        type: "sub",
+        isActive: true,
+      });
       if (childCount > 0) {
         return res.status(400).json({ message: "Remove subcategories first" });
       }
-      const stats = await getProductStats(doc.slug);
-      if (stats.total > 0) {
-        return res.status(400).json({ message: "Cannot delete: products use this category" });
-      }
-    } else {
-      const stats = await getProductStats(doc.parentSlug, doc.productStyleKey);
-      if (stats.total > 0) {
-        return res.status(400).json({ message: "Cannot delete: products use this subcategory" });
-      }
+      doc.isActive = false;
+      await doc.save();
+      return res.json({ message: "Category deleted" });
     }
 
-    await doc.deleteOne();
-    res.json({ message: "Category deleted" });
+    // Subcategories: hide from admin/public lists (soft delete).
+    // This works even when products still use the style key.
+    doc.isActive = false;
+    await doc.save();
+
+    const stats = await getProductStats(doc.parentSlug, doc.productStyleKey);
+    res.json({
+      message:
+        stats.total > 0
+          ? "Subcategory removed from list. Existing products keep this style."
+          : "Category deleted",
+    });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
+const PUBLIC_META = {
+  female: {
+    title: "Female Fashion",
+    subtitle: "Elevate your wardrobe with consciously crafted feminine silhouettes.",
+    to: "/category/female",
+    image:
+      "https://lh3.googleusercontent.com/aida-public/AB6AXuCiukL7lSowGGH1BNwfMAuup6a8qUrB5S2pBcM2k76YsM95ete1CKxoRlOz8gZYhKv9P7FSMnYvvQRfmXqbGHXDuS3T9-lgAALWZOlhXkvfnRk7biekOv8gkuW3HXT_RxXSwzGwHkgRW5bn4aAd-TQL8IYO2a6uTOX6DhXc4DmMq8pHr092RKKGkfmbTj7dzefQZWyaldzYKvWMeAlzzFwG2-ETdaCBmA8vuli47HBmfdUL5YEwQMj77rtmCVET6JJFJXMdpbqB0pXm",
+  },
+  male: {
+    title: "Male Fashion",
+    subtitle: "Shop pre-loved men's fashion curated for timeless style.",
+    to: "/category/male",
+    image:
+      "https://lh3.googleusercontent.com/aida-public/AB6AXuBaq_12MLIjP788-IcuyL49DoE_LqVyMo-bT2kI6tbfr1IRlATc7JAkbZvXTAJ5iSWIezBzWltEPOzV5rzcJ8Hsj6ynHOZGSRUB9tb-n90tbADlW5bbnSaVWxbwJwBHzrjd0sXY9iukLhUUwDiZ998w_h1mSMG2Q5Xv1njglITUncIDEjUcwdUVbcsa8PwVa-bPzA6EMX7cEWqqfgSOREUSRSw4ALLsAs6HhGg87ez0fvWMw3ecpvT30UeJImAlTyZQn2Ls4fVwYSHu",
+  },
+  kids: {
+    title: "Kids Fashion",
+    subtitle: "Gentle on the planet, perfect for the next generation of style.",
+    to: "/category/kids",
+    image:
+      "https://lh3.googleusercontent.com/aida-public/AB6AXuA2byFAgLoJ73OybxhWp_M92XJtCnNdZJ9CUqa73mYX6qoO-ood2-CpKvlk3Fh_cV1ajJM0dS2DZYq7SXGG3uh5rxeYjtJFiPBIm3GmVbxPZ7RUPz2lIWIEgeF9S2dVSN8vVYJ8FOIjthXFarAaCdDtzLg7a-oYSbMnfy0bK9kmi-nGi9lT6a9uLV3wZ1klYuJE_85sAwPs1CoA-F2OmSGcTCIeZxcr1pIGOVm2mc1NIVo91LRTj0DJSp6uP1PaHjmxtsB8KWmY64Sg",
+  },
+};
+
+function buildSubcategoryList(mainSlug, dbSubs, subStats) {
+  return dbSubs
+    .map((sub) => ({
+      id: sub._id.toString(),
+      slug: sub.slug,
+      name: sub.name,
+      productStyleKey: sub.productStyleKey || inferStyleKeyFromName(sub.name),
+      sortOrder: sub.sortOrder || 0,
+      listings: getStatsForSub(
+        subStats,
+        mainSlug,
+        sub.productStyleKey || inferStyleKeyFromName(sub.name),
+      ),
+      image: sub.imageUrl || PLACEHOLDER_IMAGE,
+    }))
+    .sort(
+      (a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || a.name.localeCompare(b.name),
+    );
+}
+
+async function listPublicCategories(req, res) {
+  try {
+    await ensureDefaultCategories();
+
+    const [categories, { mainStats, subStats }] = await Promise.all([
+      Category.find({ isActive: true }).sort({ sortOrder: 1, name: 1 }),
+      getAllProductStats(),
+    ]);
+
+    const mains = categories.filter((item) => resolveCategoryType(item) === "main");
+    const subs = categories.filter((item) => resolveCategoryType(item) === "sub");
+
+    const publicCategories = mains.map((item) => {
+      const slug = resolveCategorySlug(item);
+      const meta = PUBLIC_META[slug] || {
+        title: `${item.name} Fashion`,
+        subtitle: `Browse ${item.name.toLowerCase()} fashion on Relux Hub.`,
+        to: `/category/${slug}`,
+        image: PLACEHOLDER_IMAGE,
+      };
+      const stats = getStatsForMain(mainStats, slug);
+      const mainSubs = subs.filter((sub) => resolveParentSlug(sub) === slug);
+
+      return {
+        id: item._id.toString(),
+        slug,
+        name: item.name,
+        title: meta.title,
+        subtitle: meta.subtitle,
+        to: meta.to,
+        image: item.imageUrl || meta.image,
+        icon: item.icon,
+        totalListings: stats.total,
+        saleListings: stats.sale,
+        rentalListings: stats.rental,
+        subcategories: buildSubcategoryList(slug, mainSubs, subStats),
+      };
+    });
+
+    res.json({ categories: publicCategories });
   } catch (error) {
     res.status(500).json({ message: getErrorMessage(error) });
   }
@@ -565,6 +692,7 @@ async function deleteCategory(req, res) {
 
 module.exports = {
   listCategories,
+  listPublicCategories,
   createCategory,
   updateCategory,
   deleteCategory,

@@ -14,7 +14,7 @@ const productSchema = new mongoose.Schema(
     listingType: { type: String, enum: ["sale", "rent"], required: true },
     listingSize: { type: String, trim: true, default: "M" },
     listingCondition: { type: String, trim: true, default: "Like New" },
-    mainCategory: { type: String, enum: ["Female", "Male", "Kids"], required: true },
+    mainCategory: { type: String, trim: true, required: true },
     style: { type: String, trim: true, default: "" },
     clothingType: { type: String, trim: true, default: "" },
     salePrice: { type: String, trim: true, default: "" },

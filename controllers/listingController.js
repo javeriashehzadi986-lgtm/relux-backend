@@ -1,4 +1,5 @@
 const Product = require("../models/Product");
+const Category = require("../models/Category");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -10,7 +11,7 @@ function getErrorMessage(error) {
   return error.message || "Something went wrong";
 }
 
-function validateListingBody(body) {
+async function validateListingBody(body) {
   const { title, listingType, mainCategory, mainImage } = body;
 
   if (!title?.trim()) {
@@ -19,9 +20,19 @@ function validateListingBody(body) {
   if (!listingType || !["sale", "rent"].includes(listingType)) {
     return "Listing type must be sale or rent";
   }
-  if (!mainCategory || !["Female", "Male", "Kids"].includes(mainCategory)) {
-    return "Category must be Female, Male, or Kids";
+  if (!mainCategory?.trim()) {
+    return "Main category is required";
   }
+
+  const main = await Category.findOne({
+    type: "main",
+    isActive: true,
+    name: mainCategory.trim(),
+  });
+  if (!main) {
+    return "Select a valid main category from the list";
+  }
+
   if (!mainImage?.trim()) {
     return "At least one product image is required";
   }
@@ -42,7 +53,7 @@ function buildListingPayload(body) {
     listingType: body.listingType,
     listingSize: body.listingSize?.trim() || "M",
     listingCondition: body.listingCondition?.trim() || "Like New",
-    mainCategory: body.mainCategory,
+    mainCategory: body.mainCategory.trim(),
     style: body.style?.trim() || "",
     clothingType: body.clothingType?.trim() || "",
     salePrice: body.salePrice?.trim() || "",
@@ -68,7 +79,7 @@ async function createListing(req, res) {
       });
     }
 
-    const validationError = validateListingBody(req.body);
+    const validationError = await validateListingBody(req.body);
     if (validationError) {
       return res.status(400).json({ message: validationError });
     }
@@ -116,7 +127,7 @@ async function updateListing(req, res) {
       return res.status(404).json({ message: "Listing not found" });
     }
 
-    const validationError = validateListingBody(req.body);
+    const validationError = await validateListingBody(req.body);
     if (validationError) {
       return res.status(400).json({ message: validationError });
     }
