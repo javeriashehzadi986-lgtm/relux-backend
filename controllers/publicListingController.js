@@ -1,4 +1,5 @@
 const Product = require("../models/Product");
+const { resolveMainBySlug } = require("../utils/categoryResolve");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -18,16 +19,9 @@ async function listPublicListings(req, res) {
     const filter = { ...publicListingFilter };
 
     if (category) {
-      const normalized =
-        category.toLowerCase() === "female"
-          ? "Female"
-          : category.toLowerCase() === "male"
-            ? "Male"
-            : category.toLowerCase() === "kids"
-              ? "Kids"
-              : null;
-      if (normalized) {
-        filter.mainCategory = normalized;
+      const main = await resolveMainBySlug(category);
+      if (main?.name) {
+        filter.mainCategory = main.name;
       }
     }
 
