@@ -43,6 +43,33 @@ async function getMyNotifications(req, res) {
   }
 }
 
+async function getNotificationById(req, res) {
+  try {
+    const notificationId = String(req.params.id ?? "").trim();
+    if (!mongoose.Types.ObjectId.isValid(notificationId)) {
+      return res.status(400).json({ message: "Invalid notification id" });
+    }
+
+    const notification = await Notification.findOne({
+      _id: notificationId,
+      userId: req.user._id,
+    });
+
+    if (!notification) {
+      return res.status(404).json({ message: "Notification not found" });
+    }
+
+    if (!notification.read) {
+      notification.read = true;
+      await notification.save();
+    }
+
+    res.json({ notification: notification.toPublicJSON() });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
 async function markNotificationRead(req, res) {
   try {
     const notificationId = String(req.params.id ?? "").trim();
@@ -96,6 +123,7 @@ async function getUnreadCount(req, res) {
 
 module.exports = {
   getMyNotifications,
+  getNotificationById,
   markNotificationRead,
   markAllNotificationsRead,
   getUnreadCount,

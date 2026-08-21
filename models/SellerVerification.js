@@ -13,7 +13,7 @@ const sellerVerificationSchema = new mongoose.Schema(
     stripeConnected: { type: Boolean, default: false },
     verificationStatus: {
       type: String,
-      enum: ["pending", "approved", "rejected"],
+      enum: ["pending", "info_requested", "approved", "rejected"],
       default: "pending",
     },
     adminNote: { type: String, default: "" },

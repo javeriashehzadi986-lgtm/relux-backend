@@ -3,6 +3,7 @@ const SellerVerification = require("../models/SellerVerification");
 const {
   notifySellerApproved,
   notifySellerRejected,
+  notifySellerMoreInfoRequested,
 } = require("../services/notificationService");
 
 function mapApplication(verification) {
@@ -18,13 +19,13 @@ function mapApplication(verification) {
     city: user.city || "Not provided",
     shopName: user.name,
     appliedAt: verification.createdAt.toISOString().slice(0, 10),
-    status: verification.verificationStatus === "pending" ? "pending" : verification.verificationStatus,
+    status: verification.verificationStatus,
     avatar: null,
     cnicFront: verification.cnicFront,
     cnicBack: verification.cnicBack,
     bankName: "Not provided",
     accountTitle: user.name,
-    notes: "Seller verification request",
+    notes: verification.adminNote?.trim() || "Seller verification request",
   };
 }
 
@@ -68,6 +69,10 @@ async function approveApplication(req, res) {
       return res.status(404).json({ message: "Application not found" });
     }
 
+    if (verification.verificationStatus !== "pending") {
+      return res.status(400).json({ message: "Only pending applications can be approved" });
+    }
+
     const user = await User.findById(verification.userId);
     if (!user) {
       return res.status(404).json({ message: "Seller user not found" });
@@ -92,11 +97,53 @@ async function approveApplication(req, res) {
   }
 }
 
+async function requestMoreInfo(req, res) {
+  try {
+    const adminNote = req.body?.adminNote?.trim();
+    if (!adminNote) {
+      return res.status(400).json({ message: "Please describe what information is needed" });
+    }
+
+    const verification = await SellerVerification.findById(req.params.id);
+    if (!verification) {
+      return res.status(404).json({ message: "Application not found" });
+    }
+
+    if (verification.verificationStatus !== "pending") {
+      return res.status(400).json({ message: "Only pending applications can receive info requests" });
+    }
+
+    const user = await User.findById(verification.userId);
+    if (!user) {
+      return res.status(404).json({ message: "Seller user not found" });
+    }
+
+    verification.verificationStatus = "info_requested";
+    verification.adminNote = adminNote;
+    verification.reviewedAt = new Date();
+
+    await verification.save();
+
+    notifySellerMoreInfoRequested({ sellerId: user._id, adminNote });
+
+    res.json({
+      message: "Information request sent to seller",
+      application: mapApplication(await verification.populate("userId", "name email phone city role status")),
+    });
+  } catch (error) {
+    res.status(500).json({ message: error.message || "Failed to request more information" });
+  }
+}
+
 async function rejectApplication(req, res) {
   try {
     const verification = await SellerVerification.findById(req.params.id);
     if (!verification) {
       return res.status(404).json({ message: "Application not found" });
+    }
+
+    if (verification.verificationStatus !== "pending") {
+      return res.status(400).json({ message: "Only pending applications can be rejected" });
     }
 
     const user = await User.findById(verification.userId);
@@ -124,4 +171,9 @@ async function rejectApplication(req, res) {
   }
 }
 
-module.exports = { listApplications, approveApplication, rejectApplication };
+module.exports = {
+  listApplications,
+  approveApplication,
+  rejectApplication,
+  requestMoreInfo,
+};

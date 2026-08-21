@@ -131,6 +131,17 @@ function notifySellerRejected({ sellerId }) {
   });
 }
 
+function notifySellerMoreInfoRequested({ sellerId, adminNote }) {
+  return notifyUser({
+    userId: sellerId,
+    title: "More Information Needed",
+    message: adminNote || "Please update your seller verification documents and resubmit.",
+    category: "system",
+    iconVariant: "secondary",
+    link: "/seller-pending",
+  });
+}
+
 function notifyNewBid({ sellerId, productTitle, productId, amountFormatted }) {
   return notifyUser({
     userId: sellerId,
@@ -209,6 +220,7 @@ module.exports = {
   notifyListingRejected,
   notifySellerApproved,
   notifySellerRejected,
+  notifySellerMoreInfoRequested,
   notifyNewBid,
   notifyOutbid,
   notifyNewMessage,
