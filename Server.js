@@ -6,7 +6,9 @@ const cors = require("cors");
 const { Server } = require("socket.io");
 const connectDB = require("./config/db");
 const { setIO } = require("./socket/io");
+const { attachOptionalUser } = require("./socket/authMiddleware");
 const { initMessageSocket } = require("./socket/messageSocket");
+const { initBidSocket } = require("./socket/bidSocket");
 const authRoutes = require("./routes/authRoutes");
 const sellerVerificationRoutes = require("./routes/sellerVerificationRoutes");
 const adminSellerVerificationRoutes = require("./routes/adminSellerVerificationRoutes");
@@ -44,7 +46,9 @@ const io = new Server(server, {
 });
 
 setIO(io);
+io.use(attachOptionalUser);
 initMessageSocket(io);
+initBidSocket(io);
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -113,7 +117,7 @@ const startServer = async () => {
 
   server.listen(PORT, () => {
     console.log(`Auth server running on http://localhost:${PORT}`);
-    console.log("Socket.io enabled for real-time chat");
+    console.log("Socket.io enabled for real-time chat and auctions");
   });
 };
 

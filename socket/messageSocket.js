@@ -1,6 +1,3 @@
-const jwt = require("jsonwebtoken");
-const User = require("../models/User");
-const { JWT_SECRET } = require("../middleware/auth");
 const {
   findConversationForUser,
   sendMessageToConversation,
@@ -8,27 +5,9 @@ const {
 } = require("../services/messageService");
 
 function initMessageSocket(io) {
-  io.use(async (socket, next) => {
-    try {
-      const token = socket.handshake.auth?.token;
-      if (!token) {
-        return next(new Error("Authentication required"));
-      }
-
-      const decoded = jwt.verify(token, JWT_SECRET);
-      const user = await User.findById(decoded.id).select("-password");
-      if (!user) {
-        return next(new Error("User not found"));
-      }
-
-      socket.user = user;
-      next();
-    } catch {
-      next(new Error("Invalid token"));
-    }
-  });
-
   io.on("connection", (socket) => {
+    if (!socket.user) return;
+
     const userId = String(socket.user._id);
     socket.join(`user:${userId}`);
 

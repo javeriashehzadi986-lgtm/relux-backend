@@ -6,6 +6,10 @@ const {
   notifyNewBid,
   notifyOutbid,
 } = require("../services/notificationService");
+const {
+  emitAuctionUpdate,
+  emitAuctionViewerUpdate,
+} = require("../services/auctionSocketService");
 
 const PUBLIC_LISTING_FILTER = {
   verificationStatus: "approved",
@@ -293,6 +297,22 @@ async function placeBid(req, res) {
 
     const summary = await buildAuctionSummary(product, req.user._id);
     const history = await buildBidHistory(product._id);
+    const publicSummary = await buildAuctionSummary(product, null);
+
+    emitAuctionUpdate(product._id, {
+      summary: publicSummary,
+      history,
+    });
+
+    if (highestBid && String(highestBid.userId) !== String(req.user._id)) {
+      const outbidSummary = await buildAuctionSummary(product, highestBid.userId);
+      emitAuctionViewerUpdate(highestBid.userId, {
+        productId: String(product._id),
+        summary: outbidSummary,
+        history,
+        viewer: outbidSummary.viewer,
+      });
+    }
 
     res.status(201).json({
       message: "Bid placed successfully",
