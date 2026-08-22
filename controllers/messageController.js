@@ -3,7 +3,11 @@ const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
 const Product = require("../models/Product");
 const User = require("../models/User");
-const { notifyNewMessage } = require("../services/notificationService");
+const {
+  findConversationForUser,
+  sendMessageToConversation,
+  markConversationReadForUser,
+} = require("../services/messageService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -148,18 +152,6 @@ function mapThreadForUser(conversation, messages, userId) {
   };
 }
 
-async function findConversationForUser(conversationId, userId) {
-  const conversation = await Conversation.findById(conversationId)
-    .populate("buyerId", "name email role")
-    .populate("sellerId", "name email role");
-
-  if (!conversation || !isParticipant(conversation, userId)) {
-    return null;
-  }
-
-  return conversation;
-}
-
 async function resolveListingContext(body) {
   const listingKey = String(body.listingKey ?? body.dressId ?? body.productId ?? "").trim();
   if (!listingKey) {
@@ -237,24 +229,12 @@ async function getConversation(req, res) {
     });
 
     if (getUnreadForUser(conversation, req.user._id) > 0) {
-      const isBuyer =
-        String(conversation.buyerId?._id ?? conversation.buyerId) ===
-        String(req.user._id);
-      if (isBuyer) {
+      await markConversationReadForUser(req.params.id, req.user._id);
+      if (String(conversation.buyerId?._id ?? conversation.buyerId) === String(req.user._id)) {
         conversation.unreadBuyer = 0;
       } else {
         conversation.unreadSeller = 0;
       }
-      await conversation.save();
-
-      await Message.updateMany(
-        {
-          conversationId: conversation._id,
-          senderId: { $ne: req.user._id },
-          readAt: null,
-        },
-        { readAt: new Date() },
-      );
     }
 
     const isSeller = req.user.role === "seller";
@@ -348,95 +328,31 @@ async function openConversation(req, res) {
 
 async function sendMessage(req, res) {
   try {
-    const text = req.body.text?.trim();
-    if (!text) {
-      return res.status(400).json({ message: "Message text is required" });
-    }
-
-    const conversation = await findConversationForUser(req.params.id, req.user._id);
-    if (!conversation) {
-      return res.status(404).json({ message: "Conversation not found" });
-    }
-
-    const isBuyer =
-      String(conversation.buyerId?._id ?? conversation.buyerId) ===
-      String(req.user._id);
-
-    if (isBuyer && conversation.blockedBySeller) {
-      return res.status(403).json({ message: "This conversation is blocked" });
-    }
-    if (!isBuyer && conversation.blockedByBuyer) {
-      return res.status(403).json({ message: "This conversation is blocked" });
-    }
-
-    const message = await Message.create({
-      conversationId: conversation._id,
-      senderId: req.user._id,
-      text,
-      image: req.body.image?.trim() || "",
-    });
-
-    conversation.lastMessageText = text;
-    conversation.lastMessageAt = message.createdAt;
-
-    if (isBuyer) {
-      conversation.unreadSeller += 1;
-    } else {
-      conversation.unreadBuyer += 1;
-    }
-
-    await conversation.save();
-
-    const recipientId = isBuyer
-      ? conversation.sellerId?._id ?? conversation.sellerId
-      : conversation.buyerId?._id ?? conversation.buyerId;
-
-    notifyNewMessage({
-      userId: recipientId,
-      senderName: req.user.name,
-      preview: text.length > 120 ? `${text.slice(0, 117)}...` : text,
-      conversationId: conversation._id,
-      listingTitle: conversation.listingTitle,
+    const result = await sendMessageToConversation({
+      conversationId: req.params.id,
+      user: req.user,
+      text: req.body.text,
+      image: req.body.image,
     });
 
     res.status(201).json({
-      message: mapMessageForUser(message, req.user._id),
+      message: result.message,
     });
   } catch (error) {
-    res.status(500).json({ message: getErrorMessage(error) });
+    res.status(error.statusCode || 500).json({
+      message: getErrorMessage(error),
+    });
   }
 }
 
 async function markConversationRead(req, res) {
   try {
-    const conversation = await findConversationForUser(req.params.id, req.user._id);
-    if (!conversation) {
-      return res.status(404).json({ message: "Conversation not found" });
-    }
-
-    const isBuyer =
-      String(conversation.buyerId?._id ?? conversation.buyerId) ===
-      String(req.user._id);
-
-    if (isBuyer) {
-      conversation.unreadBuyer = 0;
-    } else {
-      conversation.unreadSeller = 0;
-    }
-
-    await conversation.save();
-    await Message.updateMany(
-      {
-        conversationId: conversation._id,
-        senderId: { $ne: req.user._id },
-        readAt: null,
-      },
-      { readAt: new Date() },
-    );
-
+    await markConversationReadForUser(req.params.id, req.user._id);
     res.json({ message: "Conversation marked as read" });
   } catch (error) {
-    res.status(500).json({ message: getErrorMessage(error) });
+    res.status(error.statusCode || 500).json({
+      message: getErrorMessage(error),
+    });
   }
 }
 

@@ -1,8 +1,12 @@
 require("dotenv").config();
 
+const http = require("http");
 const express = require("express");
 const cors = require("cors");
+const { Server } = require("socket.io");
 const connectDB = require("./config/db");
+const { setIO } = require("./socket/io");
+const { initMessageSocket } = require("./socket/messageSocket");
 const authRoutes = require("./routes/authRoutes");
 const sellerVerificationRoutes = require("./routes/sellerVerificationRoutes");
 const adminSellerVerificationRoutes = require("./routes/adminSellerVerificationRoutes");
@@ -29,7 +33,18 @@ const adminReviewRoutes = require("./routes/adminReviewRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
 
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 5002;
+
+const io = new Server(server, {
+  cors: {
+    origin: true,
+    credentials: true,
+  },
+});
+
+setIO(io);
+initMessageSocket(io);
 
 app.use(cors());
 app.use(express.json({ limit: "50mb" }));
@@ -96,8 +111,9 @@ app.use((error, req, res, next) => {
 const startServer = async () => {
   await connectDB();
 
-  app.listen(PORT, () => {
+  server.listen(PORT, () => {
     console.log(`Auth server running on http://localhost:${PORT}`);
+    console.log("Socket.io enabled for real-time chat");
   });
 };
 
