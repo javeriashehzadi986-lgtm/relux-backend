@@ -1,6 +1,7 @@
 const User = require("../models/User");
 const SellerVerification = require("../models/SellerVerification");
 const { signToken } = require("../middleware/auth");
+const { releaseEmailForNewSignup } = require("../utils/releaseBlockedEmail");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -35,14 +36,18 @@ async function applyAsSeller(req, res) {
       return res.status(400).json({ message: cnicError });
     }
 
-    const exists = await User.findOne({ email: email.toLowerCase().trim() });
-    if (exists) {
-      return res.status(409).json({ message: "Email already registered. Please login first." });
+    const emailNorm = email.toLowerCase().trim();
+    const { blocked } = await releaseEmailForNewSignup(emailNorm);
+    if (blocked) {
+      return res.status(409).json({
+        message: "Email already registered. Please log in with your existing account.",
+        code: "EMAIL_IN_USE",
+      });
     }
 
     const user = await User.create({
       name: name.trim(),
-      email: email.toLowerCase().trim(),
+      email: emailNorm,
       password,
       phone: phone.trim(),
       city: city.trim(),

@@ -1,5 +1,8 @@
 const User = require("../models/User");
+const Product = require("../models/Product");
 const { signToken } = require("../middleware/auth");
+const { sendNotificationEmail } = require("../services/emailService");
+const { releaseEmailForNewSignup } = require("../utils/releaseBlockedEmail");
 
 function getAuthErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -29,18 +32,30 @@ async function register(req, res) {
       });
     }
 
-    const exists = await User.findOne({ email: email.toLowerCase().trim() });
-    if (exists) {
-      return res.status(409).json({ message: "Email already registered" });
+    const emailNorm = email.toLowerCase().trim();
+    const { blocked } = await releaseEmailForNewSignup(emailNorm);
+    if (blocked) {
+      return res.status(409).json({
+        message: "Email already registered. Please log in with your existing account.",
+        code: "EMAIL_IN_USE",
+      });
     }
-
     const user = await User.create({
       name: name.trim(),
-      email: email.toLowerCase().trim(),
+      email: emailNorm,
       password,
       role: "buyer",
       status: "active",
     });
+
+    sendNotificationEmail({
+      to: user.email,
+      title: "Welcome to Relux Hub",
+      message:
+        "Your account has been created successfully. Browse listings, place bids, or apply to become a seller anytime.",
+      highlight: user.name,
+      link: "/home",
+    }).catch(() => {});
 
     const token = signToken(user);
     res.status(201).json({ token, user: user.toPublicJSON() });
@@ -63,7 +78,11 @@ async function login(req, res) {
     }
 
     if (user.status === "suspended") {
-      return res.status(403).json({ message: "Account suspended" });
+      return res.status(403).json({
+        message:
+          "This account was deleted. Please go to Sign Up and create a new account with the same email.",
+        code: "ACCOUNT_DELETED",
+      });
     }
 
     user.lastLoginAt = new Date();
@@ -177,9 +196,29 @@ async function deactivateMe(req, res) {
       return res.status(401).json({ message: "Password is incorrect" });
     }
 
+    const originalEmail = user.email;
+
+    await sendNotificationEmail({
+      to: originalEmail,
+      title: "Account Deleted",
+      message:
+        "Your Relux Hub account has been deleted. You can sign up again anytime using the same email address.",
+      highlight: user.name,
+      link: "/signup",
+    }).catch(() => {});
+
     user.status = "suspended";
+    user.email = `deactivated.${user._id}.${Date.now()}@reluxhub.local`;
     await user.save();
-    res.json({ message: "Account deactivated" });
+
+    if (user.role === "seller") {
+      await Product.updateMany(
+        { sellerId: user._id, status: "active" },
+        { status: "removed" },
+      );
+    }
+
+    res.json({ message: "Account deleted successfully" });
   } catch (error) {
     res.status(500).json({ message: getAuthErrorMessage(error) });
   }
