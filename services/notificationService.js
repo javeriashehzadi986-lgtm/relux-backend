@@ -1,4 +1,6 @@
 const Notification = require("../models/Notification");
+const User = require("../models/User");
+const { sendNotificationEmail } = require("./emailService");
 
 function toUserId(value) {
   if (!value) return null;
@@ -21,8 +23,30 @@ async function createNotification(payload) {
   });
 }
 
-function notifyUser(payload) {
-  return createNotification(payload).catch(() => null);
+async function sendEmailForNotification(userId, payload) {
+  try {
+    const user = await User.findById(userId).select("email notificationPrefs").lean();
+    if (!user?.email || user.notificationPrefs?.email === false) return;
+
+    await sendNotificationEmail({
+      to: user.email,
+      title: payload.title,
+      message: payload.message,
+      highlight: payload.highlight,
+      link: payload.link,
+    });
+  } catch {
+    // Email failures should not break in-app notifications.
+  }
+}
+
+async function notifyUser(payload) {
+  const userId = toUserId(payload.userId);
+  if (!userId) return null;
+
+  const notification = await createNotification(payload).catch(() => null);
+  sendEmailForNotification(userId, payload);
+  return notification;
 }
 
 function notifyRentalRequest({ sellerId, productTitle, orderId }) {
@@ -205,6 +229,29 @@ async function notifyBroadcast({ userIds, title, message, priority }) {
   }));
 
   const created = await Notification.insertMany(docs);
+
+  const users = await User.find({ _id: { $in: uniqueIds } })
+    .select("email notificationPrefs")
+    .lean();
+
+  const emailPayload = {
+    title,
+    message,
+    highlight: "Relux Hub",
+    link: "/notification",
+  };
+
+  await Promise.all(
+    users
+      .filter((user) => user.email && user.notificationPrefs?.email !== false)
+      .map((user) =>
+        sendNotificationEmail({
+          to: user.email,
+          ...emailPayload,
+        }).catch(() => null),
+      ),
+  );
+
   return created.length;
 }
 
