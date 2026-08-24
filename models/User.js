@@ -9,7 +9,7 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
     address: { type: String, trim: true, default: "" },
-    googleId: { type: String, trim: true, default: null, sparse: true, unique: true },
+    googleId: { type: String, trim: true, sparse: true, unique: true },
     authProvider: { type: String, enum: ["local", "google"], default: "local" },
     role: { type: String, enum: ["buyer", "seller", "admin"], default: "buyer" },
     status: { type: String, enum: ["active", "pending", "rejected", "suspended"], default: "active" },

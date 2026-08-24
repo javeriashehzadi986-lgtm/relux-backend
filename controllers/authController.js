@@ -1,10 +1,11 @@
 const User = require("../models/User");
 const Product = require("../models/Product");
+const PendingSignup = require("../models/PendingSignup");
 const crypto = require("crypto");
 const { OAuth2Client } = require("google-auth-library");
 const { signToken } = require("../middleware/auth");
 const { sendNotificationEmail } = require("../services/emailService");
-const { releaseEmailForNewSignup } = require("../utils/releaseBlockedEmail");
+const { releaseEmailForNewSignup, releaseDeletedUserForReSignup } = require("../utils/releaseBlockedEmail");
 
 function getAuthErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -15,6 +16,19 @@ function getAuthErrorMessage(error) {
 
 function hashResetToken(token) {
   return crypto.createHash("sha256").update(token).digest("hex");
+}
+
+const VERIFICATION_TTL_MS = 24 * 60 * 60 * 1000;
+
+async function sendSignupVerificationEmail({ to, name, rawToken }) {
+  return sendNotificationEmail({
+    to,
+    title: "Verify Your Email",
+    message:
+      "Click the button below to verify your email and activate your Relux Hub account. This link expires in 24 hours.",
+    highlight: name,
+    link: `/verify-email?token=${rawToken}`,
+  });
 }
 
 async function register(req, res) {
@@ -46,25 +60,138 @@ async function register(req, res) {
         code: "EMAIL_IN_USE",
       });
     }
-    const user = await User.create({
+
+    await PendingSignup.deleteMany({ email: emailNorm });
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    await PendingSignup.create({
       name: name.trim(),
       email: emailNorm,
       password,
+      verificationToken: hashResetToken(rawToken),
+      expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
+    });
+
+    const emailResult = await sendSignupVerificationEmail({
+      to: emailNorm,
+      name: name.trim(),
+      rawToken,
+    });
+
+    if (!emailResult.sent) {
+      await PendingSignup.deleteMany({ email: emailNorm });
+      console.error(
+        "[register] Verification email failed:",
+        emailResult.error || emailResult.reason || "unknown",
+      );
+      return res.status(503).json({
+        message: "Could not send verification email. Please try again in a few minutes.",
+        code: "EMAIL_SEND_FAILED",
+      });
+    }
+
+    res.status(201).json({
+      message: "Verification email sent. Check your inbox to activate your account.",
+      email: emailNorm,
+      requiresVerification: true,
+    });
+  } catch (error) {
+    res.status(500).json({ message: getAuthErrorMessage(error) });
+  }
+}
+
+async function verifyEmail(req, res) {
+  try {
+    const token = String(req.query.token ?? req.body?.token ?? "").trim();
+    if (!token) {
+      return res.status(400).json({ message: "Verification token is required" });
+    }
+
+    const pending = await PendingSignup.findOne({
+      verificationToken: hashResetToken(token),
+      expiresAt: { $gt: new Date() },
+    });
+
+    if (!pending) {
+      return res.status(400).json({
+        message: "This verification link is invalid or has expired. Please sign up again.",
+        code: "INVALID_TOKEN",
+      });
+    }
+
+    const { blocked } = await releaseEmailForNewSignup(pending.email);
+    if (blocked) {
+      await PendingSignup.deleteOne({ _id: pending._id });
+      return res.status(409).json({
+        message: "Email already registered. Please log in with your existing account.",
+        code: "EMAIL_IN_USE",
+      });
+    }
+
+    const user = await User.create({
+      name: pending.name,
+      email: pending.email,
+      password: pending.password,
       role: "buyer",
       status: "active",
     });
+
+    await PendingSignup.deleteOne({ _id: pending._id });
 
     sendNotificationEmail({
       to: user.email,
       title: "Welcome to Relux Hub",
       message:
-        "Your account has been created successfully. Browse listings, place bids, or apply to become a seller anytime.",
+        "Your email is verified and your account is active. Browse listings, place bids, or apply to become a seller anytime.",
       highlight: user.name,
       link: "/home",
     }).catch(() => {});
 
-    const token = signToken(user);
-    res.status(201).json({ token, user: user.toPublicJSON() });
+    const authToken = signToken(user);
+    res.json({
+      message: "Email verified. Your account is now active.",
+      token: authToken,
+      user: user.toPublicJSON(),
+    });
+  } catch (error) {
+    res.status(500).json({ message: getAuthErrorMessage(error) });
+  }
+}
+
+async function resendVerification(req, res) {
+  try {
+    const email = String(req.body.email ?? "").trim().toLowerCase();
+    const generic = {
+      message: "If a pending signup exists for that email, a new verification link has been sent.",
+    };
+
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    const pending = await PendingSignup.findOne({ email });
+    if (!pending) {
+      return res.json(generic);
+    }
+
+    const activeUser = await User.findOne({ email });
+    if (activeUser && activeUser.status !== "suspended" && activeUser.status !== "rejected") {
+      await PendingSignup.deleteOne({ _id: pending._id });
+      return res.json(generic);
+    }
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    pending.verificationToken = hashResetToken(rawToken);
+    pending.expiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
+    await pending.save();
+
+    await sendSignupVerificationEmail({
+      to: pending.email,
+      name: pending.name,
+      rawToken,
+    });
+
+    res.json(generic);
   } catch (error) {
     res.status(500).json({ message: getAuthErrorMessage(error) });
   }
@@ -78,8 +205,20 @@ async function login(req, res) {
       return res.status(400).json({ message: "Email and password are required" });
     }
 
-    const user = await User.findOne({ email: email.toLowerCase().trim() });
-    if (!user || !(await user.comparePassword(password))) {
+    const emailNorm = email.toLowerCase().trim();
+    const user = await User.findOne({ email: emailNorm });
+    if (!user) {
+      const pending = await PendingSignup.findOne({ email: emailNorm });
+      if (pending) {
+        return res.status(403).json({
+          message:
+            "Please verify your email before logging in. Check your inbox for the verification link.",
+          code: "EMAIL_NOT_VERIFIED",
+        });
+      }
+      return res.status(401).json({ message: "Invalid email or password" });
+    }
+    if (!(await user.comparePassword(password))) {
       return res.status(401).json({ message: "Invalid email or password" });
     }
 
@@ -349,9 +488,16 @@ async function deactivateMe(req, res) {
       );
     }
 
-    user.status = "suspended";
-    user.email = `deactivated.${user._id}.${Date.now()}@reluxhub.local`;
-    await user.save();
+    await User.updateOne(
+      { _id: user._id },
+      {
+        $set: {
+          status: "suspended",
+          email: `deactivated.${user._id}.${Date.now()}@reluxhub.local`,
+        },
+        $unset: { googleId: "" },
+      },
+    );
 
     if (user.role === "seller") {
       await Product.updateMany(
@@ -400,31 +546,30 @@ async function googleAuth(req, res) {
     let isNewUser = false;
 
     if (user) {
-      if (user.status === "suspended") {
-        return res.status(403).json({
-          message:
-            "This account was deleted. Please go to Sign Up and create a new account with the same email.",
-          code: "ACCOUNT_DELETED",
-        });
-      }
-
-      if (user.googleId && user.googleId !== googleId) {
-        return res.status(409).json({
-          message: "This email is linked to a different Google account.",
-          code: "GOOGLE_ACCOUNT_MISMATCH",
-        });
-      }
-
-      if (!user.googleId) {
-        user.googleId = googleId;
-        if (user.authProvider === "local") {
-          user.authProvider = "google";
+      if (user.status === "suspended" || user.status === "rejected") {
+        await releaseDeletedUserForReSignup(user);
+        user = null;
+      } else {
+        if (user.googleId && user.googleId !== googleId) {
+          return res.status(409).json({
+            message: "This email is linked to a different Google account.",
+            code: "GOOGLE_ACCOUNT_MISMATCH",
+          });
         }
-      }
 
-      user.lastLoginAt = new Date();
-      await user.save();
-    } else {
+        if (!user.googleId) {
+          user.googleId = googleId;
+          if (user.authProvider === "local") {
+            user.authProvider = "google";
+          }
+        }
+
+        user.lastLoginAt = new Date();
+        await user.save();
+      }
+    }
+
+    if (!user) {
       const { blocked } = await releaseEmailForNewSignup(email);
       if (blocked) {
         return res.status(409).json({
@@ -432,6 +577,8 @@ async function googleAuth(req, res) {
           code: "EMAIL_IN_USE",
         });
       }
+
+      await PendingSignup.deleteMany({ email });
 
       user = await User.create({
         name,
@@ -464,6 +611,8 @@ async function googleAuth(req, res) {
 
 module.exports = {
   register,
+  verifyEmail,
+  resendVerification,
   login,
   googleAuth,
   getMe,
