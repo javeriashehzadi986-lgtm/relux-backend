@@ -1,5 +1,7 @@
 const User = require("../models/User");
 const Product = require("../models/Product");
+const crypto = require("crypto");
+const { OAuth2Client } = require("google-auth-library");
 const { signToken } = require("../middleware/auth");
 const { sendNotificationEmail } = require("../services/emailService");
 const { releaseEmailForNewSignup } = require("../utils/releaseBlockedEmail");
@@ -9,6 +11,10 @@ function getAuthErrorMessage(error) {
     return "Database connection failed. Restart the backend server and check MongoDB password in .env";
   }
   return error.message || "Something went wrong";
+}
+
+function hashResetToken(token) {
+  return crypto.createHash("sha256").update(token).digest("hex");
 }
 
 async function register(req, res) {
@@ -181,6 +187,133 @@ async function updateEmail(req, res) {
   }
 }
 
+async function forgotPassword(req, res) {
+  try {
+    const email = String(req.body.email ?? "").trim().toLowerCase();
+    if (!email) {
+      return res.status(400).json({ message: "Email is required" });
+    }
+
+    // Always return the same message so attackers cannot probe emails.
+    const generic = {
+      message: "If an account exists for that email, a reset link has been sent.",
+    };
+
+    const user = await User.findOne({ email });
+    if (!user || user.status === "suspended") {
+      return res.json(generic);
+    }
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    user.passwordResetToken = hashResetToken(rawToken);
+    user.passwordResetExpires = new Date(Date.now() + 60 * 60 * 1000);
+    await user.save();
+
+    const emailResult = await sendNotificationEmail({
+      to: user.email,
+      title: "Reset Your Password",
+      message:
+        "Click the button below to choose a new password. This link expires in 1 hour. If you did not request a reset, you can ignore this email.",
+      highlight: user.name,
+      link: `/reset-password?token=${rawToken}`,
+    });
+
+    if (!emailResult.sent) {
+      console.error(
+        "[forgotPassword] Reset email failed:",
+        emailResult.error || emailResult.reason || "unknown",
+      );
+    }
+
+    res.json(generic);
+  } catch (error) {
+    res.status(500).json({ message: getAuthErrorMessage(error) });
+  }
+}
+
+async function resetPassword(req, res) {
+  try {
+    const token = String(req.body.token ?? "").trim();
+    const password = String(req.body.password ?? "");
+
+    if (!token) {
+      return res.status(400).json({ message: "Reset token is required" });
+    }
+    if (password.length < 6) {
+      return res.status(400).json({ message: "Password must be at least 6 characters" });
+    }
+
+    const user = await User.findOne({
+      passwordResetToken: hashResetToken(token),
+      passwordResetExpires: { $gt: new Date() },
+    });
+
+    if (!user || user.status === "suspended") {
+      return res.status(400).json({
+        message: "This reset link is invalid or has expired. Request a new one.",
+      });
+    }
+
+    user.password = password;
+    user.passwordResetToken = null;
+    user.passwordResetExpires = null;
+    await user.save();
+
+    sendNotificationEmail({
+      to: user.email,
+      title: "Password Changed",
+      message:
+        "Your Relux Hub password was changed successfully. If this was not you, reset your password again immediately.",
+      highlight: user.name,
+      link: "/login",
+    }).catch(() => {});
+
+    res.json({ message: "Password updated. You can log in with your new password." });
+  } catch (error) {
+    res.status(500).json({ message: getAuthErrorMessage(error) });
+  }
+}
+
+async function changePassword(req, res) {
+  try {
+    const currentPassword = String(req.body.currentPassword ?? "");
+    const newPassword = String(req.body.newPassword ?? "");
+
+    if (!currentPassword) {
+      return res.status(400).json({ message: "Current password is required" });
+    }
+    if (newPassword.length < 6) {
+      return res.status(400).json({ message: "New password must be at least 6 characters" });
+    }
+
+    const user = await User.findById(req.user._id);
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+    if (!(await user.comparePassword(currentPassword))) {
+      return res.status(401).json({ message: "Current password is incorrect" });
+    }
+
+    user.password = newPassword;
+    user.passwordResetToken = null;
+    user.passwordResetExpires = null;
+    await user.save();
+
+    sendNotificationEmail({
+      to: user.email,
+      title: "Password Changed",
+      message:
+        "Your Relux Hub password was changed successfully. If this was not you, reset your password again immediately.",
+      highlight: user.name,
+      link: "/login",
+    }).catch(() => {});
+
+    res.json({ message: "Password updated successfully" });
+  } catch (error) {
+    res.status(500).json({ message: getAuthErrorMessage(error) });
+  }
+}
+
 async function deactivateMe(req, res) {
   try {
     const password = req.body.password;
@@ -198,14 +331,23 @@ async function deactivateMe(req, res) {
 
     const originalEmail = user.email;
 
-    await sendNotificationEmail({
+    const emailResult = await sendNotificationEmail({
       to: originalEmail,
       title: "Account Deleted",
       message:
         "Your Relux Hub account has been deleted. You can sign up again anytime using the same email address.",
       highlight: user.name,
       link: "/signup",
-    }).catch(() => {});
+    });
+
+    if (!emailResult.sent) {
+      console.error(
+        "[deactivateMe] Delete confirmation email failed:",
+        emailResult.error || emailResult.reason || "unknown",
+        "to:",
+        originalEmail,
+      );
+    }
 
     user.status = "suspended";
     user.email = `deactivated.${user._id}.${Date.now()}@reluxhub.local`;
@@ -224,4 +366,111 @@ async function deactivateMe(req, res) {
   }
 }
 
-module.exports = { register, login, getMe, updateMe, updateEmail, deactivateMe };
+async function googleAuth(req, res) {
+  try {
+    const credential = String(req.body.credential ?? "").trim();
+    if (!credential) {
+      return res.status(400).json({ message: "Google credential is required" });
+    }
+
+    const clientId = String(process.env.GOOGLE_CLIENT_ID ?? "").trim();
+    if (!clientId) {
+      return res.status(503).json({
+        message: "Google sign-in is not configured. Add GOOGLE_CLIENT_ID to backend .env",
+        code: "GOOGLE_NOT_CONFIGURED",
+      });
+    }
+
+    const client = new OAuth2Client(clientId);
+    const ticket = await client.verifyIdToken({
+      idToken: credential,
+      audience: clientId,
+    });
+    const payload = ticket.getPayload();
+
+    if (!payload?.email || payload.email_verified !== true) {
+      return res.status(401).json({ message: "Google account email is not verified" });
+    }
+
+    const email = payload.email.toLowerCase().trim();
+    const googleId = payload.sub;
+    const name = String(payload.name || payload.given_name || email.split("@")[0]).trim();
+
+    let user = await User.findOne({ $or: [{ googleId }, { email }] });
+    let isNewUser = false;
+
+    if (user) {
+      if (user.status === "suspended") {
+        return res.status(403).json({
+          message:
+            "This account was deleted. Please go to Sign Up and create a new account with the same email.",
+          code: "ACCOUNT_DELETED",
+        });
+      }
+
+      if (user.googleId && user.googleId !== googleId) {
+        return res.status(409).json({
+          message: "This email is linked to a different Google account.",
+          code: "GOOGLE_ACCOUNT_MISMATCH",
+        });
+      }
+
+      if (!user.googleId) {
+        user.googleId = googleId;
+        if (user.authProvider === "local") {
+          user.authProvider = "google";
+        }
+      }
+
+      user.lastLoginAt = new Date();
+      await user.save();
+    } else {
+      const { blocked } = await releaseEmailForNewSignup(email);
+      if (blocked) {
+        return res.status(409).json({
+          message: "Email already registered. Please log in with your existing account.",
+          code: "EMAIL_IN_USE",
+        });
+      }
+
+      user = await User.create({
+        name,
+        email,
+        password: crypto.randomBytes(32).toString("hex"),
+        googleId,
+        authProvider: "google",
+        role: "buyer",
+        status: "active",
+      });
+      isNewUser = true;
+
+      sendNotificationEmail({
+        to: user.email,
+        title: "Welcome to Relux Hub",
+        message:
+          "Your account has been created with Google. Browse listings, place bids, or apply to become a seller anytime.",
+        highlight: user.name,
+        link: "/home",
+      }).catch(() => {});
+    }
+
+    const token = signToken(user);
+    res.json({ token, user: user.toPublicJSON(), isNewUser });
+  } catch (error) {
+    console.error("[googleAuth]", error.message || error);
+    res.status(401).json({ message: "Google sign-in failed. Try again or use email login." });
+  }
+}
+
+module.exports = {
+  register,
+  login,
+  googleAuth,
+  getMe,
+  updateMe,
+  updateEmail,
+  forgotPassword,
+  resetPassword,
+  changePassword,
+  deactivateMe,
+};

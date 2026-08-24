@@ -9,6 +9,8 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
     address: { type: String, trim: true, default: "" },
+    googleId: { type: String, trim: true, default: null, sparse: true, unique: true },
+    authProvider: { type: String, enum: ["local", "google"], default: "local" },
     role: { type: String, enum: ["buyer", "seller", "admin"], default: "buyer" },
     status: { type: String, enum: ["active", "pending", "rejected", "suspended"], default: "active" },
     lastLoginAt: { type: Date, default: null },
@@ -19,6 +21,8 @@ const userSchema = new mongoose.Schema(
       reports: { type: Boolean, default: false },
       support: { type: Boolean, default: true },
     },
+    passwordResetToken: { type: String, default: null },
+    passwordResetExpires: { type: Date, default: null },
   },
   { timestamps: true },
 );

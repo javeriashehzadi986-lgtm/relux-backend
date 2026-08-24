@@ -119,6 +119,15 @@ const startServer = async () => {
     console.log(`Auth server running on http://localhost:${PORT}`);
     console.log("Socket.io enabled for real-time chat and auctions");
   });
+
+  const { finalizeEndedAuctions } = require("./services/auctionFinalizeService");
+  const runAuctionFinalize = () => {
+    finalizeEndedAuctions().catch((error) => {
+      console.error("[auctionFinalize]", error.message || error);
+    });
+  };
+  runAuctionFinalize();
+  setInterval(runAuctionFinalize, 2 * 60 * 1000);
 };
 
 startServer();

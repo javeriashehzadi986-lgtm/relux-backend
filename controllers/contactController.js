@@ -1,4 +1,5 @@
 const ContactMessage = require("../models/ContactMessage");
+const { sendNotificationEmail, sendEmail } = require("../services/emailService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -33,6 +34,15 @@ async function createContactMessage(req, res) {
       message: message.trim(),
       status: "new",
     });
+
+    sendNotificationEmail({
+      to: doc.email,
+      title: "We Received Your Message",
+      message:
+        "Thanks for contacting Relux Hub. Our team has received your message and will get back to you soon.",
+      highlight: doc.name,
+      link: "/contactUs",
+    }).catch(() => {});
 
     res.status(201).json({
       message: "Your message has been sent. We will get back to you soon.",
@@ -96,7 +106,7 @@ async function updateContactMessage(req, res) {
   }
 }
 
-/** Admin: save reply + open email client payload */
+/** Admin: save reply + send via SendGrid */
 async function replyContactMessage(req, res) {
   try {
     const reply = typeof req.body.reply === "string" ? req.body.reply.trim() : "";
@@ -120,7 +130,7 @@ async function replyContactMessage(req, res) {
     await doc.save();
 
     const subject = "Re: Your message to Relux Hub";
-    const body = [
+    const text = [
       `Hi ${doc.name},`,
       "",
       reply,
@@ -132,18 +142,53 @@ async function replyContactMessage(req, res) {
       doc.message,
     ].join("\n");
 
-    const mailto = `mailto:${encodeURIComponent(doc.email)}?subject=${encodeURIComponent(
+    const html = `
+      <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a;">
+        <p>Hi ${escapeHtml(doc.name)},</p>
+        <p style="white-space:pre-wrap;line-height:1.6;">${escapeHtml(reply)}</p>
+        <p style="color:#666;">— Relux Hub Support</p>
+        <hr style="border:none;border-top:1px solid #e8e0d8;margin:24px 0;" />
+        <p style="font-size:12px;color:#888;">Your original message:</p>
+        <p style="font-size:13px;color:#555;white-space:pre-wrap;">${escapeHtml(doc.message)}</p>
+      </div>
+    `.trim();
+
+    const emailResult = await sendEmail({
+      to: doc.email,
       subject,
-    )}&body=${encodeURIComponent(body)}`;
+      text,
+      html,
+    });
+
+    if (!emailResult.sent) {
+      console.error(
+        "[replyContactMessage] Email failed:",
+        emailResult.error || emailResult.reason || "unknown",
+      );
+      return res.status(502).json({
+        message:
+          "Reply saved, but the email could not be sent. Check SendGrid and try again.",
+        contact: doc.toAdminJSON(),
+        emailSent: false,
+      });
+    }
 
     res.json({
-      message: "Reply saved. Open your email app to send it.",
+      message: "Reply emailed to the user successfully.",
       contact: doc.toAdminJSON(),
-      mailto,
+      emailSent: true,
     });
   } catch (error) {
     res.status(500).json({ message: getErrorMessage(error) });
   }
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 module.exports = {

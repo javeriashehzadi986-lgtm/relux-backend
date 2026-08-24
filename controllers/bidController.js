@@ -10,6 +10,7 @@ const {
   emitAuctionUpdate,
   emitAuctionViewerUpdate,
 } = require("../services/auctionSocketService");
+const { maybeFinalizeProduct } = require("../services/auctionFinalizeService");
 
 const PUBLIC_LISTING_FILTER = {
   verificationStatus: "approved",
@@ -223,7 +224,10 @@ async function getProductBids(req, res) {
       return res.status(400).json({ message: "This listing is not an auction item" });
     }
 
-    const summary = await buildAuctionSummary(product, req.user?._id);
+    await maybeFinalizeProduct(product).catch(() => {});
+
+    const freshProduct = (await Product.findById(product._id)) || product;
+    const summary = await buildAuctionSummary(freshProduct, req.user?._id);
     const history = await buildBidHistory(product._id);
 
     res.json({ summary, history, viewer: summary.viewer ?? null });

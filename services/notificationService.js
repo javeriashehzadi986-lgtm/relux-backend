@@ -190,6 +190,34 @@ function notifyOutbid({ buyerId, productTitle, productId }) {
   });
 }
 
+function notifyAuctionWon({ buyerId, productTitle, productId, amountFormatted }) {
+  return notifyUser({
+    userId: buyerId,
+    title: "You Won the Auction",
+    message: amountFormatted
+      ? `Congratulations! You won with a final bid of ${amountFormatted}. The seller will follow up next.`
+      : "Congratulations! You won this auction. The seller will follow up next.",
+    highlight: productTitle,
+    category: "bids",
+    iconVariant: "primary",
+    link: productId ? `/dress/${productId}` : "/profile?section=bids",
+  });
+}
+
+function notifyAuctionEnded({ sellerId, productTitle, productId, amountFormatted, hasWinner }) {
+  return notifyUser({
+    userId: sellerId,
+    title: hasWinner ? "Auction Ended — Sold" : "Auction Ended — No Bids",
+    message: hasWinner
+      ? `Your auction ended. Winning bid: ${amountFormatted || "N/A"}.`
+      : "Your auction ended without any bids. You can update the listing and try again.",
+    highlight: productTitle,
+    category: "bids",
+    iconVariant: hasWinner ? "tertiary" : "muted",
+    link: productId ? `/dress/${productId}` : "/sellerProfile?section=listings",
+  });
+}
+
 function notifyNewMessage({
   userId,
   senderName,
@@ -270,6 +298,8 @@ module.exports = {
   notifySellerMoreInfoRequested,
   notifyNewBid,
   notifyOutbid,
+  notifyAuctionWon,
+  notifyAuctionEnded,
   notifyNewMessage,
   notifyBroadcast,
 };
