@@ -64,10 +64,11 @@ async function register(req, res) {
     await PendingSignup.deleteMany({ email: emailNorm });
 
     const rawToken = crypto.randomBytes(32).toString("hex");
+    const passwordHash = await require("bcryptjs").hash(password, 10);
     await PendingSignup.create({
       name: name.trim(),
       email: emailNorm,
-      password,
+      password: passwordHash,
       verificationToken: hashResetToken(rawToken),
       expiresAt: new Date(Date.now() + VERIFICATION_TTL_MS),
     });
@@ -159,6 +160,8 @@ async function verifyEmail(req, res) {
         name: pending.name,
         email: pending.email,
         password: pending.password,
+        authProvider: "local",
+        passwordSetByUser: true,
         role: "buyer",
         status: "active",
       });
@@ -187,6 +190,7 @@ async function verifyEmail(req, res) {
 
     return sendVerifiedSignupResponse(res, user);
   } catch (error) {
+    console.error("[verifyEmail]", error.message || error);
     res.status(500).json({ message: getAuthErrorMessage(error) });
   }
 }
@@ -438,6 +442,7 @@ async function resetPassword(req, res) {
     }
 
     user.password = password;
+    user.passwordSetByUser = true;
     user.passwordResetToken = null;
     user.passwordResetExpires = null;
     await user.save();
@@ -462,9 +467,6 @@ async function changePassword(req, res) {
     const currentPassword = String(req.body.currentPassword ?? "");
     const newPassword = String(req.body.newPassword ?? "");
 
-    if (!currentPassword) {
-      return res.status(400).json({ message: "Current password is required" });
-    }
     if (newPassword.length < 6) {
       return res.status(400).json({ message: "New password must be at least 6 characters" });
     }
@@ -473,25 +475,37 @@ async function changePassword(req, res) {
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
-    if (!(await user.comparePassword(currentPassword))) {
-      return res.status(401).json({ message: "Current password is incorrect" });
+
+    const hasPassword = user.hasLocalPassword();
+    if (hasPassword) {
+      if (!currentPassword) {
+        return res.status(400).json({ message: "Current password is required" });
+      }
+      if (!(await user.comparePassword(currentPassword))) {
+        return res.status(401).json({ message: "Current password is incorrect" });
+      }
     }
 
     user.password = newPassword;
+    user.passwordSetByUser = true;
     user.passwordResetToken = null;
     user.passwordResetExpires = null;
     await user.save();
 
     sendNotificationEmail({
       to: user.email,
-      title: "Password Changed",
-      message:
-        "Your Relux Hub password was changed successfully. If this was not you, reset your password again immediately.",
+      title: hasPassword ? "Password Changed" : "Password Set",
+      message: hasPassword
+        ? "Your Relux Hub password was changed successfully. If this was not you, reset your password again immediately."
+        : "You set a Relux Hub password. You can now log in with email and password, or continue with Google.",
       highlight: user.name,
       link: "/login",
     }).catch(() => {});
 
-    res.json({ message: "Password updated successfully" });
+    res.json({
+      message: hasPassword ? "Password updated successfully" : "Password set successfully",
+      user: user.toPublicJSON(),
+    });
   } catch (error) {
     res.status(500).json({ message: getAuthErrorMessage(error) });
   }
@@ -500,16 +514,26 @@ async function changePassword(req, res) {
 async function deactivateMe(req, res) {
   try {
     const password = req.body.password;
-    if (!password) {
-      return res.status(400).json({ message: "Password is required to deactivate" });
-    }
+    const confirm = req.body.confirm === true;
 
     const user = await User.findById(req.user._id);
     if (!user) {
       return res.status(404).json({ message: "User not found" });
     }
-    if (!(await user.comparePassword(password))) {
-      return res.status(401).json({ message: "Password is incorrect" });
+
+    const hasPassword = user.hasLocalPassword();
+    if (hasPassword) {
+      if (!password) {
+        return res.status(400).json({ message: "Password is required to deactivate" });
+      }
+      if (!(await user.comparePassword(password))) {
+        return res.status(401).json({ message: "Password is incorrect" });
+      }
+    } else if (!confirm) {
+      return res.status(400).json({
+        message: "Confirm account deletion to continue",
+        code: "CONFIRM_REQUIRED",
+      });
     }
 
     const originalEmail = user.email;
@@ -603,9 +627,6 @@ async function googleAuth(req, res) {
 
         if (!user.googleId) {
           user.googleId = googleId;
-          if (user.authProvider === "local") {
-            user.authProvider = "google";
-          }
         }
 
         user.lastLoginAt = new Date();
@@ -630,6 +651,7 @@ async function googleAuth(req, res) {
         password: crypto.randomBytes(32).toString("hex"),
         googleId,
         authProvider: "google",
+        passwordSetByUser: false,
         role: "buyer",
         status: "active",
       });

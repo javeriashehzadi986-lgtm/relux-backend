@@ -11,6 +11,8 @@ const userSchema = new mongoose.Schema(
     address: { type: String, trim: true, default: "" },
     googleId: { type: String, trim: true, sparse: true, unique: true },
     authProvider: { type: String, enum: ["local", "google"], default: "local" },
+    // true = user chose a Relux password. false/missing for Google-only until they set one.
+    passwordSetByUser: { type: Boolean },
     role: { type: String, enum: ["buyer", "seller", "admin"], default: "buyer" },
     status: { type: String, enum: ["active", "pending", "rejected", "suspended"], default: "active" },
     lastLoginAt: { type: Date, default: null },
@@ -29,11 +31,22 @@ const userSchema = new mongoose.Schema(
 
 userSchema.pre("save", async function hashPassword() {
   if (!this.isModified("password")) return;
+  // Pending signup may already store a bcrypt hash — do not hash twice.
+  if (/^\$2[aby]?\$\d{2}\$/.test(String(this.password ?? ""))) return;
   this.password = await bcrypt.hash(this.password, 10);
 });
 
 userSchema.methods.comparePassword = function comparePassword(candidate) {
   return bcrypt.compare(candidate, this.password);
+};
+
+userSchema.methods.hasLocalPassword = function hasLocalPassword() {
+  // Google accounts only count as having a password after an explicit Set Password.
+  if (this.authProvider === "google") {
+    return this.passwordSetByUser === true;
+  }
+  // Email/password (and linked) accounts: treat as having a password unless marked false.
+  return this.passwordSetByUser !== false;
 };
 
 userSchema.methods.toPublicJSON = function toPublicJSON() {
@@ -49,6 +62,8 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     lastLoginAt: this.lastLoginAt,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
+    authProvider: this.authProvider || "local",
+    hasPassword: this.hasLocalPassword(),
     twoFactorEnabled: Boolean(this.twoFactorEnabled),
     notificationPrefs: {
       email: this.notificationPrefs?.email !== false,
