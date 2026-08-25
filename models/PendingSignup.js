@@ -7,6 +7,7 @@ const pendingSignupSchema = new mongoose.Schema(
     password: { type: String, required: true, minlength: 6 },
     verificationToken: { type: String, required: true },
     expiresAt: { type: Date, required: true },
+    verifiedUserId: { type: mongoose.Schema.Types.ObjectId, ref: "User", default: null },
   },
   { timestamps: true },
 );

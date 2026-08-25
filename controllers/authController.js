@@ -100,6 +100,15 @@ async function register(req, res) {
   }
 }
 
+function sendVerifiedSignupResponse(res, user, message) {
+  const authToken = signToken(user);
+  return res.json({
+    message: message || "Email verified. Your account is now active.",
+    token: authToken,
+    user: user.toPublicJSON(),
+  });
+}
+
 async function verifyEmail(req, res) {
   try {
     const token = String(req.query.token ?? req.body?.token ?? "").trim();
@@ -107,12 +116,28 @@ async function verifyEmail(req, res) {
       return res.status(400).json({ message: "Verification token is required" });
     }
 
-    const pending = await PendingSignup.findOne({
-      verificationToken: hashResetToken(token),
-      expiresAt: { $gt: new Date() },
-    });
+    const tokenHash = hashResetToken(token);
+    const pending = await PendingSignup.findOne({ verificationToken: tokenHash });
 
     if (!pending) {
+      return res.status(400).json({
+        message: "This verification link is invalid or has expired. Please sign up again.",
+        code: "INVALID_TOKEN",
+      });
+    }
+
+    if (pending.verifiedUserId) {
+      const existingUser = await User.findById(pending.verifiedUserId);
+      if (existingUser && existingUser.status !== "suspended" && existingUser.status !== "rejected") {
+        return sendVerifiedSignupResponse(
+          res,
+          existingUser,
+          "Your email is already verified. Signing you in.",
+        );
+      }
+    }
+
+    if (pending.expiresAt <= new Date()) {
       return res.status(400).json({
         message: "This verification link is invalid or has expired. Please sign up again.",
         code: "INVALID_TOKEN",
@@ -128,15 +153,28 @@ async function verifyEmail(req, res) {
       });
     }
 
-    const user = await User.create({
-      name: pending.name,
-      email: pending.email,
-      password: pending.password,
-      role: "buyer",
-      status: "active",
-    });
+    let user;
+    try {
+      user = await User.create({
+        name: pending.name,
+        email: pending.email,
+        password: pending.password,
+        role: "buyer",
+        status: "active",
+      });
+    } catch (error) {
+      if (error?.code === 11000) {
+        user = await User.findOne({ email: pending.email });
+        if (!user) {
+          throw error;
+        }
+      } else {
+        throw error;
+      }
+    }
 
-    await PendingSignup.deleteOne({ _id: pending._id });
+    pending.verifiedUserId = user._id;
+    await pending.save();
 
     sendNotificationEmail({
       to: user.email,
@@ -147,12 +185,7 @@ async function verifyEmail(req, res) {
       link: "/home",
     }).catch(() => {});
 
-    const authToken = signToken(user);
-    res.json({
-      message: "Email verified. Your account is now active.",
-      token: authToken,
-      user: user.toPublicJSON(),
-    });
+    return sendVerifiedSignupResponse(res, user);
   } catch (error) {
     res.status(500).json({ message: getAuthErrorMessage(error) });
   }
@@ -185,11 +218,22 @@ async function resendVerification(req, res) {
     pending.expiresAt = new Date(Date.now() + VERIFICATION_TTL_MS);
     await pending.save();
 
-    await sendSignupVerificationEmail({
+    const emailResult = await sendSignupVerificationEmail({
       to: pending.email,
       name: pending.name,
       rawToken,
     });
+
+    if (!emailResult.sent) {
+      console.error(
+        "[resendVerification] Verification email failed:",
+        emailResult.error || emailResult.reason || "unknown",
+      );
+      return res.status(503).json({
+        message: "Could not send verification email. Please try again in a few minutes.",
+        code: "EMAIL_SEND_FAILED",
+      });
+    }
 
     res.json(generic);
   } catch (error) {
