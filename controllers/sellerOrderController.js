@@ -45,10 +45,29 @@ async function approveOrder(req, res) {
       return res.status(400).json({ message: "Only pending requests can be approved" });
     }
 
+    const product = await Product.findById(order.productId).select(
+      "title rentPrice itemPrice",
+    );
+
+    const parseAmount = (value) =>
+      Number(String(value ?? "").replace(/[^\d.]/g, "")) || 0;
+
+    const deposit = parseAmount(product?.itemPrice);
+    const rentTotal =
+      parseAmount(product?.rentPrice) * Math.max(1, Number(order.rentalDays) || 1);
+    // Charge security deposit (matches rental page “Paid Today”); fall back to rent total
+    const amountPkr = deposit > 0 ? deposit : rentTotal;
+
     order.status = "approved";
+    if (order.type === "rental") {
+      order.paymentStatus = "pending";
+      order.paymentProvider = "stripe";
+      order.amountPkr = amountPkr;
+      order.itemAmountPkr = amountPkr;
+      order.deliveryChargesPkr = 0;
+    }
     await order.save();
 
-    const product = await Product.findById(order.productId).select("title");
     notifyBookingConfirmed({
       buyerId: order.buyerId,
       productTitle: product?.title ?? "your dress",
@@ -102,6 +121,11 @@ async function completeOrder(req, res) {
     }
     if (order.status !== "approved") {
       return res.status(400).json({ message: "Only approved orders can be completed" });
+    }
+    if (order.type === "rental" && order.paymentStatus !== "paid") {
+      return res.status(400).json({
+        message: "Buyer must complete Stripe payment before you can complete this rental",
+      });
     }
 
     order.status = "completed";

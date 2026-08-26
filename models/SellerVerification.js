@@ -11,6 +11,7 @@ const sellerVerificationSchema = new mongoose.Schema(
     cnicFront: { type: String, required: true },
     cnicBack: { type: String, required: true },
     stripeConnected: { type: Boolean, default: false },
+    stripeAccountId: { type: String, trim: true, default: "" },
     verificationStatus: {
       type: String,
       enum: ["pending", "info_requested", "approved", "rejected"],
@@ -28,6 +29,7 @@ sellerVerificationSchema.methods.toPublicJSON = function toPublicJSON() {
     userId: this.userId,
     verificationStatus: this.verificationStatus,
     stripeConnected: this.stripeConnected,
+    stripeAccountId: this.stripeAccountId || "",
     hasCnicFront: Boolean(this.cnicFront),
     hasCnicBack: Boolean(this.cnicBack),
     adminNote: this.adminNote,

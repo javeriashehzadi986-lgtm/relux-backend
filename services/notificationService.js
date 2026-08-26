@@ -76,12 +76,25 @@ function notifyRentalCancelled({ sellerId, productTitle }) {
 function notifyBookingConfirmed({ buyerId, productTitle, orderId }) {
   return notifyUser({
     userId: buyerId,
-    title: "Booking Confirmed",
-    message: "Your dress booking has been confirmed. Get ready to shine!",
+    title: "Booking Approved — Payment Due",
+    message:
+      "The seller approved your rental. Complete Stripe payment for the security deposit to activate it.",
     highlight: productTitle,
-    category: "orders",
+    category: "payments",
     iconVariant: "primary",
     link: "/profile?section=orders",
+  });
+}
+
+function notifyRentalOrderPaid({ sellerId, productTitle, orderId }) {
+  return notifyUser({
+    userId: sellerId,
+    title: "Rental Deposit Paid",
+    message: "The buyer paid the security deposit via Stripe. Prepare the item for the rental period.",
+    highlight: productTitle,
+    category: "payments",
+    iconVariant: "secondary",
+    link: "/sellerProfile?section=orders",
   });
 }
 
@@ -330,4 +343,5 @@ module.exports = {
   notifyBroadcast,
   notifyPaymentReceived,
   notifySaleOrderPaid,
+  notifyRentalOrderPaid,
 };

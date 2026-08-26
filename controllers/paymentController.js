@@ -4,6 +4,7 @@ const Product = require("../models/Product");
 const {
   notifyPaymentReceived,
   notifySaleOrderPaid,
+  notifyRentalOrderPaid,
 } = require("../services/notificationService");
 const {
   getStripe,
@@ -229,6 +230,114 @@ async function createSaleCheckout(req, res) {
   }
 }
 
+/** Buyer: pay security deposit for an approved rental via Stripe */
+async function createRentalCheckout(req, res) {
+  try {
+    if (req.user.role !== "buyer") {
+      return res.status(403).json({ message: "Only buyers can checkout" });
+    }
+
+    const { orderId } = req.body;
+    if (!orderId) {
+      return res.status(400).json({ message: "Order id is required" });
+    }
+
+    const order = await Order.findOne({
+      _id: orderId,
+      buyerId: req.user._id,
+      type: "rental",
+      removedByBuyer: false,
+    });
+
+    if (!order) {
+      return res.status(404).json({ message: "Rental order not found" });
+    }
+    if (order.status !== "approved") {
+      return res.status(400).json({
+        message: "Payment is only available after the seller approves your request",
+      });
+    }
+    if (order.paymentStatus === "paid") {
+      return res.status(400).json({ message: "This rental is already paid" });
+    }
+
+    const product = await Product.findById(order.productId);
+    if (!product) {
+      return res.status(404).json({ message: "Product not found" });
+    }
+
+    const deposit = parseAmount(product.itemPrice);
+    const rentTotal =
+      parseAmount(product.rentPrice) * Math.max(1, Number(order.rentalDays) || 1);
+    const totalPkr =
+      order.amountPkr > 0 ? order.amountPkr : deposit > 0 ? deposit : rentTotal;
+
+    if (totalPkr <= 0) {
+      return res.status(400).json({ message: "This rental has no payable amount" });
+    }
+
+    order.amountPkr = totalPkr;
+    order.itemAmountPkr = totalPkr;
+    order.paymentStatus = "pending";
+    order.paymentProvider = "stripe";
+    await order.save();
+
+    const stripe = getStripe();
+    const currency = getCurrency();
+    const unitAmount = toStripeUnitAmount(totalPkr);
+    const frontend = getFrontendUrl();
+    const imageUrl =
+      product.mainImage &&
+      /^https?:\/\//i.test(product.mainImage) &&
+      product.mainImage.length < 2000
+        ? product.mainImage
+        : undefined;
+
+    const session = await stripe.checkout.sessions.create({
+      mode: "payment",
+      customer_email: req.user.email || undefined,
+      line_items: [
+        {
+          quantity: 1,
+          price_data: {
+            currency,
+            unit_amount: unitAmount,
+            product_data: {
+              name: `Rental deposit — ${product.title || "Relux Hub"}`,
+              description: `Security deposit (PKR ${totalPkr.toLocaleString("en-PK")})`,
+              images: imageUrl ? [imageUrl] : undefined,
+            },
+          },
+        },
+      ],
+      metadata: {
+        orderId: order._id.toString(),
+        orderPublicId: order.orderId,
+        productId: product._id.toString(),
+        buyerId: req.user._id.toString(),
+        orderType: "rental",
+      },
+      success_url: `${frontend}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
+      cancel_url: `${frontend}/payment/cancel?order_id=${order._id}`,
+    });
+
+    order.stripeSessionId = session.id;
+    order.currency = currency;
+    order.stripeAmount = unitAmount;
+    await order.save();
+
+    res.status(201).json({
+      message: "Checkout session created",
+      url: session.url,
+      sessionId: session.id,
+      order: order.toBuyerJSON(),
+    });
+  } catch (error) {
+    console.error("[stripe rental checkout]", error);
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
 async function getCheckoutSessionStatus(req, res) {
   try {
     const { sessionId } = req.params;
@@ -294,22 +403,31 @@ async function markOrderPaidFromSession(session, orderDoc) {
 
   const product = await Product.findById(order.productId);
   if (product && product.status === "active") {
-    product.status = "sold";
+    product.status = order.type === "rental" ? "rented" : "sold";
     await product.save();
   }
 
-  const title = product?.title || "Your purchase";
+  const title = product?.title || (order.type === "rental" ? "Your rental" : "Your purchase");
   notifyPaymentReceived({
     buyerId: order.buyerId,
     productTitle: title,
     orderId: order._id,
     amountLabel: `PKR ${(order.amountPkr || 0).toLocaleString("en-PK")}`,
   });
-  notifySaleOrderPaid({
-    sellerId: order.sellerId,
-    productTitle: title,
-    orderId: order._id,
-  });
+
+  if (order.type === "rental") {
+    notifyRentalOrderPaid({
+      sellerId: order.sellerId,
+      productTitle: title,
+      orderId: order._id,
+    });
+  } else {
+    notifySaleOrderPaid({
+      sellerId: order.sellerId,
+      productTitle: title,
+      orderId: order._id,
+    });
+  }
 
   return order;
 }
@@ -351,6 +469,7 @@ async function handleStripeWebhook(req, res) {
 
 module.exports = {
   createSaleCheckout,
+  createRentalCheckout,
   getCheckoutSessionStatus,
   handleStripeWebhook,
 };

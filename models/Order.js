@@ -193,6 +193,9 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
 
   if (this.status === "approved") {
     const isSale = this.type === "sale";
+    const rentalNeedsPay =
+      !isSale && this.paymentStatus !== "paid";
+
     return {
       id,
       orderId: this.orderId,
@@ -205,8 +208,16 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       rentalDays: this.rentalDays,
       rentStart: this.rentStart,
       rentEnd: this.rentEnd,
-      status: isSale ? "paid" : "rental-active",
-      statusLabel: isSale ? "Paid — Shipping" : "Rental Active",
+      status: isSale
+        ? "paid"
+        : rentalNeedsPay
+          ? "awaiting-payment"
+          : "rental-active",
+      statusLabel: isSale
+        ? "Paid — Shipping"
+        : rentalNeedsPay
+          ? "Awaiting Payment"
+          : "Rental Active",
       ...payment,
       meta: isSale
         ? [
@@ -219,24 +230,34 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
               highlight: true,
             },
           ]
-        : [
-            { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
-            { icon: "check-circle", text: "Seller Approved", highlight: true },
-          ],
+        : rentalNeedsPay
+          ? [
+              { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
+              {
+                icon: "clock",
+                text: "Seller approved — pay security deposit via Stripe",
+              },
+            ]
+          : [
+              { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
+              { icon: "check-circle", text: "Paid — Rental Active", highlight: true },
+            ],
       actions: [
         { id: "details", label: "View Details", variant: "outline", link: true },
-        ...(isSale
-          ? []
-          : [
-              {
-                id: "rent-again",
-                label: "Rent Again",
-                variant: "ghost",
-                icon: "history",
-                alignEnd: true,
-                link: true,
-              },
-            ]),
+        ...(rentalNeedsPay
+          ? [{ id: "pay", label: "Pay with Stripe", variant: "primary" }]
+          : isSale
+            ? []
+            : [
+                {
+                  id: "rent-again",
+                  label: "Rent Again",
+                  variant: "ghost",
+                  icon: "history",
+                  alignEnd: true,
+                  link: true,
+                },
+              ]),
       ],
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
