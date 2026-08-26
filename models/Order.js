@@ -49,6 +49,31 @@ const orderSchema = new mongoose.Schema(
     rentalDays: { type: Number, default: 0 },
     buyerName: { type: String, trim: true, default: "Buyer" },
     removedByBuyer: { type: Boolean, default: false },
+
+    // Payment (Stripe checkout for resale / auction wins)
+    paymentStatus: {
+      type: String,
+      enum: ["unpaid", "pending", "paid", "failed", "refunded"],
+      default: "unpaid",
+      index: true,
+    },
+    paymentProvider: { type: String, trim: true, default: "" },
+    amountPkr: { type: Number, default: 0 },
+    itemAmountPkr: { type: Number, default: 0 },
+    deliveryChargesPkr: { type: Number, default: 0 },
+    currency: { type: String, trim: true, default: "" },
+    stripeAmount: { type: Number, default: 0 },
+    stripeSessionId: { type: String, trim: true, default: "", index: true },
+    stripePaymentIntentId: { type: String, trim: true, default: "" },
+    paidAt: { type: Date, default: null },
+    shipping: {
+      fullName: { type: String, trim: true, default: "" },
+      phone: { type: String, trim: true, default: "" },
+      email: { type: String, trim: true, default: "" },
+      address: { type: String, trim: true, default: "" },
+      city: { type: String, trim: true, default: "" },
+      specialInstructions: { type: String, trim: true, default: "" },
+    },
   },
   { timestamps: true },
 );
@@ -85,6 +110,12 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   const dressId =
     this.productId?._id?.toString?.() ?? this.productId?.toString?.() ?? this.productId;
 
+  const payment = {
+    paymentStatus: this.paymentStatus || "unpaid",
+    amountPkr: this.amountPkr || 0,
+    paidAt: this.paidAt,
+  };
+
   if (this.status === "cancelled" || this.status === "rejected") {
     return {
       id,
@@ -100,6 +131,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       rentEnd: this.rentEnd,
       status: "cancelled",
       statusLabel: "Cancelled",
+      ...payment,
       meta:
         this.type === "rental" && this.rentStart
           ? [{ icon: "clock", text: formatRentalPeriod(this.rentStart, this.rentEnd) }]
@@ -114,6 +146,8 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   }
 
   if (this.status === "pending") {
+    const awaitingPay =
+      this.type === "sale" && this.paymentStatus !== "paid";
     return {
       id,
       orderId: this.orderId,
@@ -127,14 +161,27 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       rentStart: this.rentStart,
       rentEnd: this.rentEnd,
       status: "processing",
-      statusLabel: "Processing",
-      meta: [
-        { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
-        {
-          icon: "clock",
-          text: formatRentalPeriod(this.rentStart, this.rentEnd) || "Awaiting seller approval",
-        },
-      ],
+      statusLabel: awaitingPay ? "Awaiting Payment" : "Processing",
+      ...payment,
+      meta:
+        this.type === "sale"
+          ? [
+              {
+                icon: "clock",
+                text: awaitingPay
+                  ? "Complete Stripe checkout to confirm"
+                  : "Payment received — preparing shipment",
+              },
+            ]
+          : [
+              { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
+              {
+                icon: "clock",
+                text:
+                  formatRentalPeriod(this.rentStart, this.rentEnd) ||
+                  "Awaiting seller approval",
+              },
+            ],
       actions: [
         { id: "details", label: "View Details", variant: "outline", link: true },
         { id: "cancel", label: "Cancel Request", variant: "danger" },
@@ -145,34 +192,51 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   }
 
   if (this.status === "approved") {
+    const isSale = this.type === "sale";
     return {
       id,
       orderId: this.orderId,
       dressId,
       buyerId: this.buyerId?.toString?.() ?? this.buyerId,
       sellerId: this.sellerId?.toString?.() ?? this.sellerId,
-      type: this.type === "sale" ? "purchase" : "rental",
-      typeLabel: this.type === "sale" ? "Purchase" : "Rental",
+      type: isSale ? "purchase" : "rental",
+      typeLabel: isSale ? "Purchase" : "Rental",
       size: this.size,
       rentalDays: this.rentalDays,
       rentStart: this.rentStart,
       rentEnd: this.rentEnd,
-      status: "rental-active",
-      statusLabel: "Rental Active",
-      meta: [
-        { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
-        { icon: "check-circle", text: "Seller Approved", highlight: true },
-      ],
+      status: isSale ? "paid" : "rental-active",
+      statusLabel: isSale ? "Paid — Shipping" : "Rental Active",
+      ...payment,
+      meta: isSale
+        ? [
+            {
+              icon: "check-circle",
+              text:
+                this.paymentStatus === "paid"
+                  ? "Payment confirmed via Stripe"
+                  : "Order approved",
+              highlight: true,
+            },
+          ]
+        : [
+            { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
+            { icon: "check-circle", text: "Seller Approved", highlight: true },
+          ],
       actions: [
         { id: "details", label: "View Details", variant: "outline", link: true },
-        {
-          id: "rent-again",
-          label: "Rent Again",
-          variant: "ghost",
-          icon: "history",
-          alignEnd: true,
-          link: true,
-        },
+        ...(isSale
+          ? []
+          : [
+              {
+                id: "rent-again",
+                label: "Rent Again",
+                variant: "ghost",
+                icon: "history",
+                alignEnd: true,
+                link: true,
+              },
+            ]),
       ],
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
@@ -194,12 +258,19 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
     rentEnd: this.rentEnd,
     status: "delivered",
     statusLabel: "Delivered",
-    meta: [{ icon: "check-circle", text: "Rental Completed", highlight: true }],
+    ...payment,
+    meta: [
+      {
+        icon: "check-circle",
+        text: this.type === "sale" ? "Purchase Completed" : "Rental Completed",
+        highlight: true,
+      },
+    ],
     actions: [
       { id: "details", label: "View Details", variant: "outline", link: true },
       {
         id: "rent-again",
-        label: "Rent Again",
+        label: this.type === "sale" ? "Shop Again" : "Rent Again",
         variant: "ghost",
         icon: "history",
         alignEnd: true,

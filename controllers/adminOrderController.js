@@ -10,10 +10,27 @@ function getErrorMessage(error) {
 function formatMoney(value) {
   if (value === null || value === undefined || value === "") return "—";
   const str = String(value).trim();
-  if (str.startsWith("$")) return str;
+  if (str.startsWith("$") || str.startsWith("PKR")) return str;
   const num = Number(str.replace(/[^0-9.]/g, ""));
   if (Number.isNaN(num)) return str;
-  return `$${num.toFixed(2)}`;
+  return `PKR ${Math.round(num).toLocaleString("en-PK")}`;
+}
+
+function formatPkrAmount(amount) {
+  const num = Number(amount);
+  if (!Number.isFinite(num) || num <= 0) return null;
+  return `PKR ${Math.round(num).toLocaleString("en-PK")}`;
+}
+
+function resolveSalePaymentStatus(order) {
+  if (order.paymentStatus === "paid") return "paid";
+  if (order.paymentStatus === "refunded") return "refunded";
+  if (order.paymentStatus === "failed") return "failed";
+  if (order.status === "cancelled" || order.status === "rejected") {
+    return order.paymentStatus === "paid" ? "refunded" : "unpaid";
+  }
+  if (order.paymentStatus === "pending") return "pending";
+  return order.paymentStatus || "unpaid";
 }
 
 function formatShortRange(start, end) {
@@ -156,20 +173,25 @@ function toSaleAdminJSON(order) {
   const image = productImage(product);
   const uiStatus = saleUiStatus(order);
   const deliveryStatus = saleDeliveryStatus(order);
-  const amount = formatMoney(product?.salePrice || product?.startingBid || product?.itemPrice);
+  const amount =
+    formatPkrAmount(order.itemAmountPkr || order.amountPkr) ||
+    formatMoney(product?.salePrice || product?.startingBid || product?.itemPrice);
   const id = order._id.toString();
+  const paymentStatus = resolveSalePaymentStatus(order);
 
   const logistics = [
     {
       label:
-        order.status === "completed"
-          ? "Order completed"
-          : order.status === "approved"
-            ? "Seller approved order"
-            : order.status === "cancelled" || order.status === "rejected"
-              ? "Order closed"
-              : "Order placed",
-      date: formatDateTimeLabel(order.updatedAt || order.createdAt),
+        order.paymentStatus === "paid"
+          ? "Stripe payment confirmed"
+          : order.status === "completed"
+            ? "Order completed"
+            : order.status === "approved"
+              ? "Seller approved order"
+              : order.status === "cancelled" || order.status === "rejected"
+                ? "Order closed"
+                : "Order placed",
+      date: formatDateTimeLabel(order.paidAt || order.updatedAt || order.createdAt),
       active: true,
     },
     {
@@ -181,7 +203,7 @@ function toSaleAdminJSON(order) {
 
   return {
     id,
-    displayId: `RS-${id.slice(-4).toUpperCase()}`,
+    displayId: order.orderId || `RS-${id.slice(-4).toUpperCase()}`,
     mongoId: id,
     itemId: product?._id ? `ITEM-${String(product._id).slice(-6).toUpperCase()}` : "ITEM-—",
     dbStatus: order.status,
@@ -195,7 +217,8 @@ function toSaleAdminJSON(order) {
     winningBid: amount,
     date: formatDateLabel(order.createdAt),
     status: uiStatus,
-    paymentStatus: order.status === "cancelled" || order.status === "rejected" ? "refunded" : "paid",
+    paymentStatus,
+    stripeSessionId: order.stripeSessionId || "",
     deliveryStatus,
     logistics,
     size: order.size || "",

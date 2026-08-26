@@ -47,10 +47,13 @@ async function getPublicListings(req, res) {
 
     let listingQuery = Product.find(query)
       .populate("sellerId", "name city")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .maxTimeMS(15000);
 
     if (limit > 0) {
       listingQuery = listingQuery.limit(limit);
+    } else {
+      listingQuery = listingQuery.limit(24);
     }
 
     const listings = await listingQuery;
@@ -59,7 +62,15 @@ async function getPublicListings(req, res) {
 
     res.json({ listings: mapped });
   } catch (error) {
-    res.status(500).json({ message: error.message || "Failed to load catalog" });
+    const timedOut =
+      error.name === "MongoNetworkTimeoutError" ||
+      error.code === 50 ||
+      /timed out|MaxTimeMS/i.test(error.message || "");
+    res.status(timedOut ? 504 : 500).json({
+      message: timedOut
+        ? "Database is slow or unreachable. Check MongoDB Atlas Network Access / internet, then restart the backend."
+        : error.message || "Failed to load catalog",
+    });
   }
 }
 

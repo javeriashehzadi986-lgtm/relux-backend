@@ -33,6 +33,8 @@ const adminNotificationRoutes = require("./routes/adminNotificationRoutes");
 const adminCategoryRoutes = require("./routes/adminCategoryRoutes");
 const adminReviewRoutes = require("./routes/adminReviewRoutes");
 const categoryRoutes = require("./routes/categoryRoutes");
+const paymentRoutes = require("./routes/paymentRoutes");
+const { handleStripeWebhook } = require("./controllers/paymentController");
 
 const app = express();
 const server = http.createServer(app);
@@ -51,6 +53,14 @@ initMessageSocket(io);
 initBidSocket(io);
 
 app.use(cors());
+
+// Stripe webhooks need the raw body for signature verification
+app.post(
+  "/api/payments/webhook",
+  express.raw({ type: "application/json" }),
+  handleStripeWebhook,
+);
+
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
@@ -101,6 +111,7 @@ app.use("/api/notifications", notificationRoutes);
 app.use("/api/admin/notifications", adminNotificationRoutes);
 app.use("/api/admin/categories", adminCategoryRoutes);
 app.use("/api/categories", categoryRoutes);
+app.use("/api/payments", paymentRoutes);
 
 app.use((error, req, res, next) => {
   if (error?.type === "entity.too.large") {

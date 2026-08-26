@@ -283,6 +283,32 @@ async function notifyBroadcast({ userIds, title, message, priority }) {
   return created.length;
 }
 
+function notifyPaymentReceived({ buyerId, productTitle, orderId, amountLabel }) {
+  return notifyUser({
+    userId: buyerId,
+    title: "Payment Successful",
+    message: amountLabel
+      ? `Your Stripe payment of ${amountLabel} was received. We are preparing your order.`
+      : "Your Stripe payment was received. We are preparing your order.",
+    highlight: productTitle,
+    category: "payments",
+    iconVariant: "primary",
+    link: "/profile?section=orders",
+  });
+}
+
+function notifySaleOrderPaid({ sellerId, productTitle, orderId }) {
+  return notifyUser({
+    userId: sellerId,
+    title: "Sale Paid",
+    message: "A buyer completed Stripe checkout for your listing. Prepare the item for shipping.",
+    highlight: productTitle,
+    category: "payments",
+    iconVariant: "secondary",
+    link: "/sellerProfile?section=orders",
+  });
+}
+
 module.exports = {
   createNotification,
   notifyUser,
@@ -302,4 +328,6 @@ module.exports = {
   notifyAuctionEnded,
   notifyNewMessage,
   notifyBroadcast,
+  notifyPaymentReceived,
+  notifySaleOrderPaid,
 };
