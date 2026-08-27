@@ -301,7 +301,7 @@ function notifyPaymentReceived({ buyerId, productTitle, orderId, amountLabel }) 
     userId: buyerId,
     title: "Payment Successful",
     message: amountLabel
-      ? `Your Stripe payment of ${amountLabel} was received. We are preparing your order.`
+      ? `Payment received: ${amountLabel}. We are preparing your order.`
       : "Your Stripe payment was received. We are preparing your order.",
     highlight: productTitle,
     category: "payments",

@@ -206,7 +206,14 @@ async function upsertCategory(fields) {
   }
 }
 
+let defaultCategoriesPromise = null;
+
 async function ensureDefaultCategories() {
+  if (defaultCategoriesPromise) {
+    return defaultCategoriesPromise;
+  }
+
+  defaultCategoriesPromise = (async () => {
   try {
     const brokenCount = await Category.countDocuments({
       $or: [
@@ -261,7 +268,11 @@ async function ensureDefaultCategories() {
     }
   } catch (error) {
     console.error("Category seed skipped:", error.message);
+    defaultCategoriesPromise = null;
   }
+  })();
+
+  return defaultCategoriesPromise;
 }
 
 async function getAllProductStats() {

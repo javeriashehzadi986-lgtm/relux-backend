@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const Product = require("../models/Product");
 const {
   resolveMainBySlug,
@@ -5,7 +6,15 @@ const {
   categoryPathForSlug,
 } = require("../utils/categoryResolve");
 
-function mapPublicListing(product, nameToSlug) {
+const LIST_IMAGE_MAX_CHARS = 50000;
+
+function safeListImage(src) {
+  if (!src || typeof src !== "string") return "";
+  if (src.length > LIST_IMAGE_MAX_CHARS) return "";
+  return src;
+}
+
+function mapPublicListing(product, nameToSlug, { includeGallery = true } = {}) {
   const seller = product.sellerId;
   const sellerId =
     seller && typeof seller === "object"
@@ -13,15 +22,51 @@ function mapPublicListing(product, nameToSlug) {
       : product.sellerId?.toString?.() ?? product.sellerId;
 
   const slug = nameToSlug[product.mainCategory];
+  const base =
+    typeof product.toPublicJSON === "function"
+      ? product.toPublicJSON()
+      : {
+          id: product._id,
+          sellerId: product.sellerId,
+          title: product.title,
+          brand: product.brand || "",
+          description: product.description || "",
+          listingType: product.listingType,
+          listingSize: product.listingSize || "",
+          listingCondition: product.listingCondition || "",
+          mainCategory: product.mainCategory,
+          style: product.style || "",
+          clothingType: product.clothingType || "",
+          salePrice: product.salePrice || "",
+          startingBid: product.startingBid || "",
+          minBid: product.minBid || "",
+          auctionEndDate: product.auctionEndDate || "",
+          rentPrice: product.rentPrice || "",
+          itemPrice: product.itemPrice || "",
+          mainImage: product.mainImage || "",
+          gallery: product.gallery || [],
+          verificationStatus: product.verificationStatus,
+          status: product.status,
+          adminNote: product.adminNote || "",
+          submittedAt: product.createdAt,
+          reviewedAt: product.reviewedAt,
+        };
 
   return {
-    ...product.toPublicJSON(),
+    ...base,
     id: product._id.toString(),
     sellerId: sellerId ? String(sellerId) : null,
     categoryPath: categoryPathForSlug(slug),
     sellerName: seller?.name || "Relux Seller",
     seller: seller?.name || "Relux Seller",
     updatedAt: product.updatedAt,
+    mainImage: safeListImage(base.mainImage || product.mainImage),
+    gallery: includeGallery
+      ? (base.gallery || product.gallery || [])
+          .map(safeListImage)
+          .filter(Boolean)
+          .slice(0, 8)
+      : [],
   };
 }
 
@@ -29,7 +74,7 @@ async function getPublicListings(req, res) {
   try {
     const slug = req.query.category;
     const type = String(req.query.type ?? "").trim().toLowerCase();
-    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 0, 0), 24);
+    const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 12, 1), 24);
     const query = { verificationStatus: "approved", status: "active" };
 
     if (slug) {
@@ -45,20 +90,50 @@ async function getPublicListings(req, res) {
       query.listingType = "sale";
     }
 
-    let listingQuery = Product.find(query)
-      .populate("sellerId", "name city")
-      .sort({ createdAt: -1 })
-      .maxTimeMS(15000);
+    // Project away huge base64 blobs BEFORE they leave MongoDB (fixes Atlas timeouts)
+    const pipeline = [
+      { $match: query },
+      { $sort: { createdAt: -1 } },
+      { $limit: limit },
+      {
+        $addFields: {
+          mainImage: {
+            $cond: [
+              {
+                $gt: [{ $strLenCP: { $ifNull: ["$mainImage", ""] } }, LIST_IMAGE_MAX_CHARS],
+              },
+              "",
+              { $ifNull: ["$mainImage", ""] },
+            ],
+          },
+          gallery: [],
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "sellerId",
+          foreignField: "_id",
+          as: "sellerDocs",
+          pipeline: [{ $project: { name: 1, city: 1 } }],
+        },
+      },
+      {
+        $addFields: {
+          sellerId: { $arrayElemAt: ["$sellerDocs", 0] },
+        },
+      },
+      { $project: { sellerDocs: 0 } },
+    ];
 
-    if (limit > 0) {
-      listingQuery = listingQuery.limit(limit);
-    } else {
-      listingQuery = listingQuery.limit(24);
-    }
+    const [listings, nameToSlug] = await Promise.all([
+      Product.aggregate(pipeline).option({ maxTimeMS: 12000 }),
+      buildNameToSlugMap(),
+    ]);
 
-    const listings = await listingQuery;
-    const nameToSlug = await buildNameToSlugMap();
-    const mapped = listings.map((item) => mapPublicListing(item, nameToSlug));
+    const mapped = listings.map((item) =>
+      mapPublicListing(item, nameToSlug, { includeGallery: false }),
+    );
 
     res.json({ listings: mapped });
   } catch (error) {
@@ -76,20 +151,75 @@ async function getPublicListings(req, res) {
 
 async function getPublicListing(req, res) {
   try {
-    const product = await Product.findOne({
-      _id: req.params.id,
-      verificationStatus: "approved",
-      status: "active",
-    }).populate("sellerId", "name city");
+    if (!mongoose.isValidObjectId(req.params.id)) {
+      return res.status(404).json({ message: "Listing not found" });
+    }
 
+    const rows = await Product.aggregate([
+      {
+        $match: {
+          _id: new mongoose.Types.ObjectId(req.params.id),
+          verificationStatus: "approved",
+          status: { $in: ["active", "sold"] },
+        },
+      },
+      {
+        $addFields: {
+          mainImage: {
+            $cond: [
+              {
+                $gt: [{ $strLenCP: { $ifNull: ["$mainImage", ""] } }, LIST_IMAGE_MAX_CHARS],
+              },
+              "",
+              { $ifNull: ["$mainImage", ""] },
+            ],
+          },
+          gallery: {
+            $filter: {
+              input: { $ifNull: ["$gallery", []] },
+              as: "img",
+              cond: {
+                $lte: [{ $strLenCP: { $ifNull: ["$$img", ""] } }, LIST_IMAGE_MAX_CHARS],
+              },
+            },
+          },
+        },
+      },
+      {
+        $lookup: {
+          from: "users",
+          localField: "sellerId",
+          foreignField: "_id",
+          as: "sellerDocs",
+          pipeline: [{ $project: { name: 1, city: 1 } }],
+        },
+      },
+      {
+        $addFields: {
+          sellerId: { $arrayElemAt: ["$sellerDocs", 0] },
+        },
+      },
+      { $project: { sellerDocs: 0 } },
+      { $limit: 1 },
+    ]).option({ maxTimeMS: 15000 });
+
+    const product = rows[0];
     if (!product) {
       return res.status(404).json({ message: "Listing not found" });
     }
 
     const nameToSlug = await buildNameToSlugMap();
-    res.json({ listing: mapPublicListing(product, nameToSlug) });
+    res.json({ listing: mapPublicListing(product, nameToSlug, { includeGallery: true }) });
   } catch (error) {
-    res.status(500).json({ message: error.message || "Failed to load listing" });
+    const timedOut =
+      error.name === "MongoNetworkTimeoutError" ||
+      error.code === 50 ||
+      /timed out|MaxTimeMS/i.test(error.message || "");
+    res.status(timedOut ? 504 : 500).json({
+      message: timedOut
+        ? "Database is slow or unreachable. Check MongoDB Atlas / internet."
+        : error.message || "Failed to load listing",
+    });
   }
 }
 

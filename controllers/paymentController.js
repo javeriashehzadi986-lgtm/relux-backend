@@ -60,6 +60,72 @@ function computeSaleTotals(product, highestBid) {
   return { winningBid, deliveryCharges, totalPkr };
 }
 
+/** Buyer (auction winner): load listing for checkout even if marked sold after auction end */
+async function getSaleCheckoutListing(req, res) {
+  try {
+    if (req.user.role !== "buyer") {
+      return res.status(403).json({ message: "Only buyers can checkout" });
+    }
+
+    const productId = req.params.productId;
+    if (!productId) {
+      return res.status(400).json({ message: "Product is required" });
+    }
+
+    const product = await Product.findById(productId).populate("sellerId", "name city");
+    if (!product || product.listingType !== "sale") {
+      return res.status(404).json({ message: "Listing not found" });
+    }
+    if (product.verificationStatus !== "approved") {
+      return res.status(404).json({ message: "Listing not found" });
+    }
+    if (!["active", "sold"].includes(product.status)) {
+      return res.status(404).json({ message: "Listing not found" });
+    }
+
+    const auctionEnd = getAuctionEndDate(product);
+    if (Date.now() < auctionEnd.getTime()) {
+      return res.status(400).json({ message: "This auction has not ended yet" });
+    }
+
+    const highestBid = await getHighestBid(product._id);
+    if (!highestBid || String(highestBid.userId) !== String(req.user._id)) {
+      return res.status(403).json({
+        message: "Only the auction winner can open this checkout",
+      });
+    }
+
+    const alreadyPaid = await Order.findOne({
+      productId: product._id,
+      type: "sale",
+      paymentStatus: "paid",
+      status: { $nin: ["cancelled", "rejected"] },
+    });
+    if (alreadyPaid) {
+      return res.status(400).json({ message: "This item has already been purchased" });
+    }
+
+    const seller = product.sellerId;
+    const listing = {
+      ...product.toPublicJSON(),
+      id: product._id.toString(),
+      sellerId:
+        seller && typeof seller === "object"
+          ? seller._id?.toString?.() ?? String(seller._id)
+          : product.sellerId?.toString?.() ?? product.sellerId,
+      sellerName: (seller && typeof seller === "object" && seller.name) || "Relux Seller",
+      seller: (seller && typeof seller === "object" && seller.name) || "Relux Seller",
+      currentBid: highestBid.amount,
+      winningBid: highestBid.amount,
+    };
+
+    res.json({ listing });
+  } catch (error) {
+    console.error("[sale checkout listing]", error);
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
 /** Buyer: create unpaid sale order + Stripe Checkout Session */
 async function createSaleCheckout(req, res) {
   try {
@@ -93,6 +159,9 @@ async function createSaleCheckout(req, res) {
     }
     if (product.verificationStatus !== "approved") {
       return res.status(400).json({ message: "This listing is not available" });
+    }
+    if (!["active", "sold"].includes(product.status)) {
+      return res.status(400).json({ message: "This listing is not available for checkout" });
     }
     if (!product.sellerId) {
       return res.status(400).json({ message: "This listing has no seller linked" });
@@ -176,7 +245,9 @@ async function createSaleCheckout(req, res) {
 
     const stripe = getStripe();
     const currency = getCurrency();
-    const unitAmount = toStripeUnitAmount(totalPkr);
+    const bidUnitAmount = toStripeUnitAmount(winningBid);
+    const deliveryUnitAmount = toStripeUnitAmount(deliveryCharges);
+    const unitAmount = bidUnitAmount + deliveryUnitAmount;
     const frontend = getFrontendUrl();
 
     const imageUrl =
@@ -194,11 +265,22 @@ async function createSaleCheckout(req, res) {
           quantity: 1,
           price_data: {
             currency,
-            unit_amount: unitAmount,
+            unit_amount: bidUnitAmount,
             product_data: {
-              name: product.title || "Relux Hub purchase",
-              description: `Winning bid + delivery (PKR ${totalPkr.toLocaleString("en-PK")})`,
+              name: `Winning bid — ${product.title || "Relux Hub item"}`,
+              description: `Your winning auction bid: PKR ${winningBid.toLocaleString("en-PK")}`,
               images: imageUrl ? [imageUrl] : undefined,
+            },
+          },
+        },
+        {
+          quantity: 1,
+          price_data: {
+            currency,
+            unit_amount: deliveryUnitAmount,
+            product_data: {
+              name: "Delivery charges",
+              description: `Shipping within Pakistan: PKR ${deliveryCharges.toLocaleString("en-PK")}`,
             },
           },
         },
@@ -208,6 +290,9 @@ async function createSaleCheckout(req, res) {
         orderPublicId: order.orderId,
         productId: product._id.toString(),
         buyerId: req.user._id.toString(),
+        winningBidPkr: String(winningBid),
+        deliveryPkr: String(deliveryCharges),
+        totalPkr: String(totalPkr),
       },
       success_url: `${frontend}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${frontend}/payment/cancel?product_id=${product._id}`,
@@ -408,11 +493,19 @@ async function markOrderPaidFromSession(session, orderDoc) {
   }
 
   const title = product?.title || (order.type === "rental" ? "Your rental" : "Your purchase");
+  const bidPart = order.itemAmountPkr || 0;
+  const deliveryPart = order.deliveryChargesPkr || 0;
+  const totalPart = order.amountPkr || 0;
+  const amountLabel =
+    order.type === "sale" && deliveryPart > 0
+      ? `PKR ${totalPart.toLocaleString("en-PK")} (winning bid PKR ${bidPart.toLocaleString("en-PK")} + delivery PKR ${deliveryPart.toLocaleString("en-PK")})`
+      : `PKR ${totalPart.toLocaleString("en-PK")}`;
+
   notifyPaymentReceived({
     buyerId: order.buyerId,
     productTitle: title,
     orderId: order._id,
-    amountLabel: `PKR ${(order.amountPkr || 0).toLocaleString("en-PK")}`,
+    amountLabel,
   });
 
   if (order.type === "rental") {
@@ -468,6 +561,7 @@ async function handleStripeWebhook(req, res) {
 }
 
 module.exports = {
+  getSaleCheckoutListing,
   createSaleCheckout,
   createRentalCheckout,
   getCheckoutSessionStatus,

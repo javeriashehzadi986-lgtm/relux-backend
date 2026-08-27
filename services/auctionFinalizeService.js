@@ -57,9 +57,7 @@ async function finalizeAuction(product) {
   const productId = String(claimed._id);
 
   if (highestBid) {
-    claimed.status = "sold";
-    await claimed.save();
-
+    // Keep listing available for winner checkout — mark sold only after Stripe payment.
     notifyAuctionWon({
       buyerId: highestBid.userId,
       productTitle,
