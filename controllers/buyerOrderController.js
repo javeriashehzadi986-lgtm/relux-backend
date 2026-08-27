@@ -131,6 +131,38 @@ async function getMyBuyerOrders(req, res) {
   }
 }
 
+async function getMyBuyerOrder(req, res) {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      buyerId: req.user._id,
+      removedByBuyer: false,
+    })
+      .populate("productId", "title")
+      .populate("sellerId", "name");
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+
+    const json = order.toBuyerJSON();
+    const product = order.productId;
+    const seller = order.sellerId;
+
+    res.json({
+      order: {
+        ...json,
+        productTitle:
+          (product && typeof product === "object" && product.title) || "",
+        sellerName:
+          (seller && typeof seller === "object" && seller.name) || "",
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
 async function cancelMyOrder(req, res) {
   try {
     const order = await Order.findOne({
@@ -192,6 +224,7 @@ async function removeMyOrder(req, res) {
 module.exports = {
   createRentalRequest,
   getMyBuyerOrders,
+  getMyBuyerOrder,
   cancelMyOrder,
   removeMyOrder,
 };

@@ -112,6 +112,14 @@ async function getMyWishlist(req, res) {
   }
 }
 
+async function upsertWishlistEntry(userId, payload) {
+  return Wishlist.findOneAndUpdate(
+    { userId, itemId: payload.itemId },
+    { $set: { userId, ...payload } },
+    { upsert: true, new: true, setDefaultsOnInsert: true },
+  );
+}
+
 async function addWishlistItem(req, res) {
   try {
     const payload = buildWishlistPayload(req.body);
@@ -124,26 +132,17 @@ async function addWishlistItem(req, res) {
       return res.status(400).json({ message: productError });
     }
 
-    const existing = await Wishlist.findOne({
-      userId: req.user._id,
-      itemId: payload.itemId,
-    });
-
-    if (existing) {
-      Object.assign(existing, payload);
-      await existing.save();
-      const item = await enrichFromProduct(existing);
-      return res.json({ message: "Wishlist updated", item, saved: true });
-    }
-
-    const entry = await Wishlist.create({
-      userId: req.user._id,
-      ...payload,
-    });
-
+    const entry = await upsertWishlistEntry(req.user._id, payload);
     const item = await enrichFromProduct(entry);
     res.status(201).json({ message: "Added to wishlist", item, saved: true });
   } catch (error) {
+    if (error?.code === 11000 && error?.keyPattern?.userId && !error?.keyPattern?.itemId) {
+      return res.status(503).json({
+        message:
+          "Wishlist database index is outdated. Run: node scripts/fix-wishlist-index.js in the Backend folder, then restart the server.",
+        code: "WISHLIST_INDEX_OUTDATED",
+      });
+    }
     res.status(500).json({ message: getErrorMessage(error) });
   }
 }
@@ -196,10 +195,7 @@ async function toggleWishlistItem(req, res) {
       return res.status(400).json({ message: productError });
     }
 
-    const entry = await Wishlist.create({
-      userId: req.user._id,
-      ...payload,
-    });
+    const entry = await upsertWishlistEntry(req.user._id, payload);
 
     const item = await enrichFromProduct(entry);
     res.status(201).json({
@@ -208,6 +204,13 @@ async function toggleWishlistItem(req, res) {
       saved: true,
     });
   } catch (error) {
+    if (error?.code === 11000 && error?.keyPattern?.userId && !error?.keyPattern?.itemId) {
+      return res.status(503).json({
+        message:
+          "Wishlist database index is outdated. Run: node scripts/fix-wishlist-index.js in the Backend folder, then restart the server.",
+        code: "WISHLIST_INDEX_OUTDATED",
+      });
+    }
     res.status(500).json({ message: getErrorMessage(error) });
   }
 }

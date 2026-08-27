@@ -322,7 +322,7 @@ async function createRentalCheckout(req, res) {
       return res.status(403).json({ message: "Only buyers can checkout" });
     }
 
-    const { orderId } = req.body;
+    const { orderId, fullName, phone, email, address, city, specialInstructions } = req.body;
     if (!orderId) {
       return res.status(400).json({ message: "Order id is required" });
     }
@@ -359,6 +359,18 @@ async function createRentalCheckout(req, res) {
 
     if (totalPkr <= 0) {
       return res.status(400).json({ message: "This rental has no payable amount" });
+    }
+
+    if (fullName?.trim() && phone?.trim() && address?.trim() && city?.trim()) {
+      order.shipping = {
+        fullName: fullName.trim(),
+        phone: phone.trim(),
+        email: (email || req.user.email || "").trim(),
+        address: address.trim(),
+        city: city.trim(),
+        specialInstructions: String(specialInstructions || "").trim(),
+      };
+      order.buyerName = fullName.trim();
     }
 
     order.amountPkr = totalPkr;

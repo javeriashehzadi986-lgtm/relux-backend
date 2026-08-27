@@ -245,7 +245,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       actions: [
         { id: "details", label: "View Details", variant: "outline", link: true },
         ...(rentalNeedsPay
-          ? [{ id: "pay", label: "Pay with Stripe", variant: "primary" }]
+          ? [{ id: "checkout", label: "Proceed to Checkout", variant: "primary", link: true }]
           : isSale
             ? []
             : [
