@@ -3,6 +3,7 @@ const { protect, authorize } = require("../middleware/auth");
 const {
   createRentalRequest,
   getMyBuyerOrders,
+  getMyBuyerOrder,
   cancelMyOrder,
   removeMyOrder,
 } = require("../controllers/buyerOrderController");
@@ -13,6 +14,7 @@ router.use(protect, authorize("buyer"));
 
 router.get("/me", getMyBuyerOrders);
 router.post("/rental", createRentalRequest);
+router.get("/:id", getMyBuyerOrder);
 router.patch("/:id/cancel", cancelMyOrder);
 router.delete("/:id", removeMyOrder);
 
