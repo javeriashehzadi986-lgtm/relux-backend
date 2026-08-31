@@ -58,6 +58,122 @@ function buildNotificationText({ title, message, highlight, link }) {
   return lines.join("\n");
 }
 
+function formatDispatchField(value, fallback = "—") {
+  const text = String(value ?? "").trim();
+  return text || fallback;
+}
+
+function buildDispatchDetails(order, product, buyer) {
+  const shipping = order.shipping || {};
+  const isRental = order.type === "rental";
+
+  return {
+    orderPublicId: order.orderId || String(order._id),
+    orderType: isRental ? "Rental" : "Purchase",
+    productTitle: product?.title || "Relux Hub item",
+    buyerName: formatDispatchField(shipping.fullName || order.buyerName || buyer?.name),
+    buyerEmail: formatDispatchField(shipping.email || buyer?.email),
+    buyerPhone: formatDispatchField(shipping.phone || buyer?.phone),
+    address: formatDispatchField(shipping.address),
+    city: formatDispatchField(shipping.city),
+    specialInstructions: formatDispatchField(shipping.specialInstructions, "None"),
+    size: formatDispatchField(order.size),
+    rentStart: isRental ? formatDispatchField(order.rentStart) : "",
+    rentEnd: isRental ? formatDispatchField(order.rentEnd) : "",
+    rentalDays: isRental ? String(order.rentalDays || "—") : "",
+    amountPkr: order.amountPkr
+      ? `PKR ${Math.round(order.amountPkr).toLocaleString("en-PK")}`
+      : "—",
+  };
+}
+
+function buildDispatchDetailsHtml(details) {
+  const rentalRows = details.rentStart
+    ? `
+      <tr><td style="padding:8px 0;color:#666;">Rental period</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.rentStart)} – ${escapeHtml(details.rentEnd)} (${escapeHtml(details.rentalDays)} days)</td></tr>
+    `
+    : "";
+
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a;">
+      <div style="padding:24px 0;border-bottom:1px solid #e8e0d8;">
+        <strong style="font-size:18px;color:#8b6914;">Relux Hub</strong>
+      </div>
+      <div style="padding:24px 0;">
+        <h1 style="margin:0 0 8px;font-size:22px;line-height:1.3;">New ${escapeHtml(details.orderType)} — dispatch details</h1>
+        <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#444;">
+          A buyer completed payment for <strong>${escapeHtml(details.productTitle)}</strong>.
+          Use the details below to prepare and ship the order.
+        </p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.5;">
+          <tr><td style="padding:8px 0;color:#666;">Order ID</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.orderPublicId)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Item</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.productTitle)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Size</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.size)}</td></tr>
+          ${rentalRows}
+          <tr><td style="padding:8px 0;color:#666;">Amount paid</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.amountPkr)}</td></tr>
+        </table>
+        <h2 style="margin:24px 0 12px;font-size:16px;">Buyer &amp; shipping</h2>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.5;">
+          <tr><td style="padding:8px 0;color:#666;">Name</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.buyerName)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Email</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.buyerEmail)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Phone</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.buyerPhone)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Address</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.address)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">City</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.city)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Instructions</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.specialInstructions)}</td></tr>
+        </table>
+        <a href="${escapeHtml(buildActionUrl("/sellerProfile?section=orders"))}" style="display:inline-block;margin-top:24px;padding:12px 20px;background:#8b6914;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">Open seller orders</a>
+      </div>
+      <p style="margin:0;padding-top:16px;border-top:1px solid #e8e0d8;font-size:12px;color:#888;">
+        This email contains buyer shipping details for order fulfillment on Relux Hub.
+      </p>
+    </div>
+  `.trim();
+}
+
+function buildDispatchDetailsText(details) {
+  const lines = [
+    `New ${details.orderType} — dispatch details`,
+    "",
+    `Order: ${details.orderPublicId}`,
+    `Item: ${details.productTitle}`,
+    `Size: ${details.size}`,
+  ];
+
+  if (details.rentStart) {
+    lines.push(
+      `Rental: ${details.rentStart} – ${details.rentEnd} (${details.rentalDays} days)`,
+    );
+  }
+
+  lines.push(
+    `Amount paid: ${details.amountPkr}`,
+    "",
+    "Buyer & shipping",
+    `Name: ${details.buyerName}`,
+    `Email: ${details.buyerEmail}`,
+    `Phone: ${details.buyerPhone}`,
+    `Address: ${details.address}`,
+    `City: ${details.city}`,
+    `Instructions: ${details.specialInstructions}`,
+    "",
+    `Open seller orders: ${buildActionUrl("/sellerProfile?section=orders")}`,
+  );
+
+  return lines.join("\n");
+}
+
+async function sendSellerDispatchDetailsEmail({ to, order, product, buyer }) {
+  const details = buildDispatchDetails(order, product, buyer);
+  const subject = `Dispatch details — ${details.productTitle} | Relux Hub`;
+
+  return sendEmail({
+    to,
+    subject,
+    html: buildDispatchDetailsHtml(details),
+    text: buildDispatchDetailsText(details),
+  });
+}
+
 async function sendEmail({ to, subject, html, text }) {
   if (!isConfigured()) {
     return { sent: false, skipped: true, reason: "sendgrid_not_configured" };
@@ -97,5 +213,7 @@ module.exports = {
   isConfigured,
   sendEmail,
   sendNotificationEmail,
+  sendSellerDispatchDetailsEmail,
+  buildDispatchDetails,
   buildActionUrl,
 };

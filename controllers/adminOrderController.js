@@ -1,4 +1,9 @@
 const Order = require("../models/Order");
+const {
+  getFulfillmentLabel,
+  syncProductForOrder,
+} = require("../services/orderStatusService");
+const { getEscrowLabel } = require("../services/escrowService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -88,12 +93,18 @@ function rentalUiStatus(order) {
   if (order.status === "completed") return "returned";
   if (order.status === "cancelled" || order.status === "rejected") return "cancelled";
 
-  if (order.status === "approved" && order.rentEnd) {
+  const fs = order.fulfillmentStatus || "processing";
+
+  if (order.status === "approved" && order.rentEnd && fs !== "returned") {
     const end = new Date(`${order.rentEnd}T23:59:59`);
     if (!Number.isNaN(end.getTime()) && end < new Date()) {
       return "overdue";
     }
   }
+
+  if (fs === "returned") return "returned";
+  if (fs === "delivered") return "delivered";
+  if (fs === "shipped") return "shipped";
 
   return "ongoing";
 }
@@ -101,14 +112,35 @@ function rentalUiStatus(order) {
 function saleUiStatus(order) {
   if (order.status === "completed") return "completed";
   if (order.status === "cancelled" || order.status === "rejected") return "cancelled";
-  return "pending";
+  return order.fulfillmentStatus || "processing";
 }
 
 function saleDeliveryStatus(order) {
   if (order.status === "completed") return "delivered";
-  if (order.status === "approved") return "shipped";
   if (order.status === "cancelled" || order.status === "rejected") return "processing";
-  return "processing";
+  return order.fulfillmentStatus || "processing";
+}
+
+function rentalReturnStatus(order) {
+  if (order.status === "completed") return "Returned";
+  const fs = order.fulfillmentStatus || "processing";
+  const labels = {
+    processing: "Processing",
+    shipped: "Shipped to Buyer",
+    delivered: "With Buyer",
+    returned: "Returned by Buyer",
+  };
+  return labels[fs] || "In Progress";
+}
+
+function resolveRentalPaymentStatus(order) {
+  if (order.paymentStatus === "paid") return "paid";
+  if (order.paymentStatus === "refunded") return "refunded";
+  if (order.paymentStatus === "failed") return "failed";
+  if (order.status === "cancelled" || order.status === "rejected") {
+    return order.paymentStatus === "paid" ? "refunded" : "unpaid";
+  }
+  return order.paymentStatus || "unpaid";
 }
 
 function toRentalAdminJSON(order) {
@@ -120,6 +152,10 @@ function toRentalAdminJSON(order) {
   const days = order.rentalDays || 0;
   const amount = formatMoney(product?.rentPrice);
   const itemValue = formatMoney(product?.itemPrice || product?.salePrice);
+  const paymentStatus = resolveRentalPaymentStatus(order);
+  const fulfillmentStatus = order.fulfillmentStatus || "processing";
+  const fulfillmentLabel = getFulfillmentLabel(order);
+  const productStatus = product?.status || "—";
 
   let rentalDates = formatFullRange(order.rentStart, order.rentEnd);
   let rentalDaysLabel = days ? `${days} Days` : "—";
@@ -151,13 +187,20 @@ function toRentalAdminJSON(order) {
     rentalDays: rentalDaysLabel,
     amount,
     status: uiStatus,
+    statusLabel: fulfillmentLabel,
     rentalPeriod: formatShortRange(order.rentStart, order.rentEnd),
     rentalCost: amount,
     itemValue,
     rentalType: days >= 7 ? "Weekly" : "Daily",
-    paymentStatus: order.status === "cancelled" || order.status === "rejected" ? "unpaid" : "paid",
-    returnStatus:
-      uiStatus === "returned" ? "Returned" : uiStatus === "overdue" ? "Overdue" : "In Progress",
+    paymentStatus,
+    fulfillmentStatus,
+    fulfillmentLabel,
+    productStatus,
+    escrowStatus: order.escrowStatus || "none",
+    escrowLabel: getEscrowLabel(order),
+    rentalChargePkr: order.rentalChargePkr || 0,
+    refundAmountPkr: order.refundAmountPkr || 0,
+    returnStatus: rentalReturnStatus(order),
     overdue: uiStatus === "overdue",
     size: order.size || "",
     rentStart: order.rentStart || "",
@@ -178,6 +221,9 @@ function toSaleAdminJSON(order) {
     formatMoney(product?.salePrice || product?.startingBid || product?.itemPrice);
   const id = order._id.toString();
   const paymentStatus = resolveSalePaymentStatus(order);
+  const fulfillmentStatus = order.fulfillmentStatus || "processing";
+  const fulfillmentLabel = getFulfillmentLabel(order);
+  const productStatus = product?.status || "—";
 
   const logistics = [
     {
@@ -217,9 +263,13 @@ function toSaleAdminJSON(order) {
     winningBid: amount,
     date: formatDateLabel(order.createdAt),
     status: uiStatus,
+    statusLabel: fulfillmentLabel,
     paymentStatus,
     stripeSessionId: order.stripeSessionId || "",
     deliveryStatus,
+    fulfillmentStatus,
+    fulfillmentLabel,
+    productStatus,
     logistics,
     size: order.size || "",
     createdAt: order.createdAt,
@@ -232,7 +282,7 @@ async function loadOrders(type) {
     .populate("sellerId", "name email status role")
     .populate(
       "productId",
-      "title mainImage gallery rentPrice salePrice itemPrice startingBid",
+      "title mainImage gallery rentPrice salePrice itemPrice startingBid status",
     )
     .sort({ createdAt: -1 })
     .limit(500);
@@ -303,7 +353,7 @@ async function updateAdminOrderStatus(req, res) {
       .populate("sellerId", "name email status role")
       .populate(
         "productId",
-        "title mainImage gallery rentPrice salePrice itemPrice startingBid",
+        "title mainImage gallery rentPrice salePrice itemPrice startingBid status",
       );
 
     if (!order) {
@@ -312,6 +362,7 @@ async function updateAdminOrderStatus(req, res) {
 
     order.status = status;
     await order.save();
+    await syncProductForOrder(order);
 
     const mapped =
       order.type === "rental" ? toRentalAdminJSON(order) : toSaleAdminJSON(order);

@@ -6,6 +6,8 @@ const {
   getMyBuyerOrder,
   cancelMyOrder,
   removeMyOrder,
+  confirmReceivedOrder,
+  markReturnedOrder,
 } = require("../controllers/buyerOrderController");
 
 const router = express.Router();
@@ -16,6 +18,8 @@ router.get("/me", getMyBuyerOrders);
 router.post("/rental", createRentalRequest);
 router.get("/:id", getMyBuyerOrder);
 router.patch("/:id/cancel", cancelMyOrder);
+router.patch("/:id/confirm-received", confirmReceivedOrder);
+router.patch("/:id/mark-returned", markReturnedOrder);
 router.delete("/:id", removeMyOrder);
 
 module.exports = router;

@@ -1,6 +1,6 @@
 const Notification = require("../models/Notification");
 const User = require("../models/User");
-const { sendNotificationEmail } = require("./emailService");
+const { sendNotificationEmail, sendSellerDispatchDetailsEmail } = require("./emailService");
 
 function toUserId(value) {
   if (!value) return null;
@@ -90,12 +90,29 @@ function notifyRentalOrderPaid({ sellerId, productTitle, orderId }) {
   return notifyUser({
     userId: sellerId,
     title: "Rental Deposit Paid",
-    message: "The buyer paid the security deposit via Stripe. Prepare the item for the rental period.",
+    message:
+      "The buyer paid the security deposit via Stripe. Buyer shipping details were emailed to you — prepare the item for dispatch.",
     highlight: productTitle,
     category: "payments",
     iconVariant: "secondary",
     link: "/sellerProfile?section=orders",
   });
+}
+
+async function notifySellerDispatchDetails({ sellerId, order, product, buyer }) {
+  const seller = await User.findById(sellerId).select("email name").lean();
+  if (!seller?.email) return null;
+
+  try {
+    return await sendSellerDispatchDetailsEmail({
+      to: seller.email,
+      order,
+      product,
+      buyer,
+    });
+  } catch {
+    return null;
+  }
 }
 
 function notifyBookingRejected({ buyerId, productTitle }) {
@@ -120,6 +137,69 @@ function notifyRentalCompleted({ buyerId, productTitle }) {
     iconVariant: "tertiary",
     link: "/profile?section=orders",
   });
+}
+
+function notifyBuyerConfirmedReceipt({ sellerId, productTitle, orderId }) {
+  return notifyUser({
+    userId: sellerId,
+    title: "Buyer Confirmed Receipt",
+    message: "The buyer confirmed they received the item. You can proceed with the next order step.",
+    highlight: productTitle,
+    category: "orders",
+    iconVariant: "primary",
+    link: "/sellerProfile?section=orders",
+    meta: orderId ? { orderId: String(orderId) } : undefined,
+  });
+}
+
+function notifyBuyerMarkedReturn({ sellerId, productTitle, orderId }) {
+  return notifyUser({
+    userId: sellerId,
+    title: "Buyer Marked Item Returned",
+    message: "The buyer marked the rental item as returned. Review and complete the order when ready.",
+    highlight: productTitle,
+    category: "orders",
+    iconVariant: "primary",
+    link: "/sellerProfile?section=orders",
+    meta: orderId ? { orderId: String(orderId) } : undefined,
+  });
+}
+
+function notifyEscrowReleased({
+  buyerId,
+  sellerId,
+  productTitle,
+  orderId,
+  refundLabel,
+  rentalChargeLabel,
+}) {
+  const refundText =
+    refundLabel && refundLabel !== "PKR 0"
+      ? `${refundLabel} has been refunded to your payment method.`
+      : "Your escrow deposit has been settled after rental charges.";
+
+  return Promise.all([
+    notifyUser({
+      userId: buyerId,
+      title: "Escrow Deposit Released",
+      message: `${refundText} Rental charges: ${rentalChargeLabel || "PKR 0"}.`,
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "tertiary",
+      link: "/profile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+    notifyUser({
+      userId: sellerId,
+      title: "Escrow Settled",
+      message: `You confirmed the return. ${refundText}`,
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "primary",
+      link: "/sellerProfile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+  ]);
 }
 
 function notifyListingApproved({ sellerId, productTitle, productId }) {
@@ -314,7 +394,8 @@ function notifySaleOrderPaid({ sellerId, productTitle, orderId }) {
   return notifyUser({
     userId: sellerId,
     title: "Sale Paid",
-    message: "A buyer completed Stripe checkout for your listing. Prepare the item for shipping.",
+    message:
+      "A buyer completed Stripe checkout for your listing. Buyer shipping details were emailed to you — prepare the item for dispatch.",
     highlight: productTitle,
     category: "payments",
     iconVariant: "secondary",
@@ -330,6 +411,9 @@ module.exports = {
   notifyBookingConfirmed,
   notifyBookingRejected,
   notifyRentalCompleted,
+  notifyBuyerConfirmedReceipt,
+  notifyBuyerMarkedReturn,
+  notifyEscrowReleased,
   notifyListingApproved,
   notifyListingRejected,
   notifySellerApproved,
@@ -344,4 +428,5 @@ module.exports = {
   notifyPaymentReceived,
   notifySaleOrderPaid,
   notifyRentalOrderPaid,
+  notifySellerDispatchDetails,
 };

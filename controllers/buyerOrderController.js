@@ -3,7 +3,14 @@ const Product = require("../models/Product");
 const {
   notifyRentalRequest,
   notifyRentalCancelled,
+  notifyBuyerConfirmedReceipt,
+  notifyBuyerMarkedReturn,
 } = require("../services/notificationService");
+const {
+  FULFILLMENT,
+  ensurePaid,
+  isRentalPeriodComplete,
+} = require("../services/orderStatusService");
 
 function getErrorMessage(error) {
   if (error.code === 11000) {
@@ -108,23 +115,12 @@ async function getMyBuyerOrders(req, res) {
       buyerId: req.user._id,
       removedByBuyer: false,
     })
-      .populate("productId", "title")
+      .populate("productId", "title mainImage gallery brand listingType")
       .populate("sellerId", "name")
       .sort({ createdAt: -1 });
 
     res.json({
-      orders: orders.map((order) => {
-        const json = order.toBuyerJSON();
-        const product = order.productId;
-        const seller = order.sellerId;
-        return {
-          ...json,
-          productTitle:
-            (product && typeof product === "object" && product.title) || "",
-          sellerName:
-            (seller && typeof seller === "object" && seller.name) || "",
-        };
-      }),
+      orders: orders.map((order) => order.toBuyerJSON()),
     });
   } catch (error) {
     res.status(500).json({ message: getErrorMessage(error) });
@@ -138,7 +134,7 @@ async function getMyBuyerOrder(req, res) {
       buyerId: req.user._id,
       removedByBuyer: false,
     })
-      .populate("productId", "title")
+      .populate("productId", "title mainImage gallery brand listingType")
       .populate("sellerId", "name");
 
     if (!order) {
@@ -221,10 +217,96 @@ async function removeMyOrder(req, res) {
   }
 }
 
+async function confirmReceivedOrder(req, res) {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      buyerId: req.user._id,
+    });
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    if (order.status !== "approved") {
+      return res.status(400).json({ message: "Only approved orders can be confirmed" });
+    }
+    ensurePaid(order);
+
+    const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
+    if (fs !== FULFILLMENT.SHIPPED) {
+      return res.status(400).json({
+        message: "Seller must ship the order before you can confirm receipt",
+      });
+    }
+
+    order.fulfillmentStatus = FULFILLMENT.DELIVERED;
+    await order.save();
+
+    const product = await Product.findById(order.productId).select("title");
+    notifyBuyerConfirmedReceipt({
+      sellerId: order.sellerId,
+      productTitle: product?.title ?? "your item",
+      orderId: order._id,
+    });
+
+    res.json({ message: "Receipt confirmed", order: order.toBuyerJSON() });
+  } catch (error) {
+    res.status(400).json({ message: error.message || getErrorMessage(error) });
+  }
+}
+
+async function markReturnedOrder(req, res) {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      buyerId: req.user._id,
+    });
+
+    if (!order) {
+      return res.status(404).json({ message: "Order not found" });
+    }
+    if (order.type !== "rental") {
+      return res.status(400).json({ message: "Returns only apply to rental orders" });
+    }
+    if (order.status !== "approved") {
+      return res.status(400).json({ message: "Only active rentals can be returned" });
+    }
+    ensurePaid(order);
+
+    const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
+    if (fs !== FULFILLMENT.DELIVERED) {
+      return res.status(400).json({
+        message: "Confirm receipt before marking the item as returned",
+      });
+    }
+    if (!isRentalPeriodComplete(order.rentEnd)) {
+      return res.status(400).json({
+        message: "You can mark the item as returned only after the rental period ends",
+      });
+    }
+
+    order.fulfillmentStatus = FULFILLMENT.RETURNED;
+    await order.save();
+
+    const product = await Product.findById(order.productId).select("title");
+    notifyBuyerMarkedReturn({
+      sellerId: order.sellerId,
+      productTitle: product?.title ?? "your item",
+      orderId: order._id,
+    });
+
+    res.json({ message: "Return recorded", order: order.toBuyerJSON() });
+  } catch (error) {
+    res.status(400).json({ message: error.message || getErrorMessage(error) });
+  }
+}
+
 module.exports = {
   createRentalRequest,
   getMyBuyerOrders,
   getMyBuyerOrder,
   cancelMyOrder,
   removeMyOrder,
+  confirmReceivedOrder,
+  markReturnedOrder,
 };

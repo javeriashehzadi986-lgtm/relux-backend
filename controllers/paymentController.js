@@ -1,11 +1,14 @@
 const Bid = require("../models/Bid");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const User = require("../models/User");
 const {
   notifyPaymentReceived,
   notifySaleOrderPaid,
   notifyRentalOrderPaid,
+  notifySellerDispatchDetails,
 } = require("../services/notificationService");
+const { syncProductForOrder } = require("../services/orderStatusService");
 const {
   getStripe,
   getCurrency,
@@ -315,8 +318,8 @@ async function createRentalCheckout(req, res) {
             currency,
             unit_amount: unitAmount,
             product_data: {
-              name: `Rental deposit — ${product.title || "Relux Hub"}`,
-              description: `Security deposit (PKR ${totalPkr.toLocaleString("en-PK")})`,
+              name: `Rental deposit (escrow) — ${product.title || "Relux Hub"}`,
+              description: `Security deposit held in escrow until return (PKR ${totalPkr.toLocaleString("en-PK")})`,
               images: imageUrl ? [imageUrl] : undefined,
             },
           },
@@ -411,13 +414,20 @@ async function markOrderPaidFromSession(session, orderDoc) {
   if (order.status === "pending" || order.status === "cancelled") {
     order.status = "approved";
   }
-  await order.save();
-
-  const product = await Product.findById(order.productId);
-  if (product && product.status === "active") {
-    product.status = order.type === "rental" ? "rented" : "sold";
-    await product.save();
+  if (!order.fulfillmentStatus) {
+    order.fulfillmentStatus = "processing";
   }
+  if (order.type === "rental") {
+    order.escrowStatus = "held";
+    order.escrowHeldAt = new Date();
+  }
+  await order.save();
+  await syncProductForOrder(order);
+
+  const [product, buyer] = await Promise.all([
+    Product.findById(order.productId),
+    User.findById(order.buyerId).select("name email phone"),
+  ]);
 
   const title = product?.title || (order.type === "rental" ? "Your rental" : "Your purchase");
   notifyPaymentReceived({
@@ -425,6 +435,13 @@ async function markOrderPaidFromSession(session, orderDoc) {
     productTitle: title,
     orderId: order._id,
     amountLabel: `PKR ${(order.amountPkr || 0).toLocaleString("en-PK")}`,
+  });
+
+  notifySellerDispatchDetails({
+    sellerId: order.sellerId,
+    order,
+    product,
+    buyer,
   });
 
   if (order.type === "rental") {

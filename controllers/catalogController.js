@@ -1,4 +1,5 @@
 const Product = require("../models/Product");
+const Order = require("../models/Order");
 const {
   resolveMainBySlug,
   buildNameToSlugMap,
@@ -74,13 +75,51 @@ async function getPublicListings(req, res) {
   }
 }
 
+async function userCanViewNonActiveListing(user, product) {
+  if (!user || !product) return false;
+  if (user.role === "admin") return true;
+
+  const userId = user._id.toString();
+  const sellerId =
+    product.sellerId?._id?.toString?.() ??
+    product.sellerId?.toString?.() ??
+    String(product.sellerId);
+
+  if (sellerId === userId) return true;
+
+  const order = await Order.findOne({
+    productId: product._id,
+    $or: [{ buyerId: user._id }, { sellerId: user._id }],
+    status: { $nin: ["cancelled", "rejected"] },
+    removedByBuyer: { $ne: true },
+  }).select("_id");
+
+  return Boolean(order);
+}
+
 async function getPublicListing(req, res) {
   try {
-    const product = await Product.findOne({
-      _id: req.params.id,
+    const productId = req.params.id;
+
+    let product = await Product.findOne({
+      _id: productId,
       verificationStatus: "approved",
       status: "active",
     }).populate("sellerId", "name city");
+
+    if (!product) {
+      const inactiveProduct = await Product.findOne({
+        _id: productId,
+        verificationStatus: "approved",
+      }).populate("sellerId", "name city");
+
+      if (
+        inactiveProduct &&
+        (await userCanViewNonActiveListing(req.user, inactiveProduct))
+      ) {
+        product = inactiveProduct;
+      }
+    }
 
     if (!product) {
       return res.status(404).json({ message: "Listing not found" });

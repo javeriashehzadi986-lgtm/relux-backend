@@ -1,4 +1,6 @@
 const mongoose = require("mongoose");
+const { getFulfillmentLabel, FULFILLMENT, getFulfillmentVariant, isRentalPeriodComplete, getReturnAvailableLabel } = require("../services/orderStatusService");
+const { getEscrowLabel } = require("../services/escrowService");
 
 function generateOrderId() {
   const stamp = Date.now().toString(36).toUpperCase();
@@ -66,6 +68,23 @@ const orderSchema = new mongoose.Schema(
     stripeSessionId: { type: String, trim: true, default: "", index: true },
     stripePaymentIntentId: { type: String, trim: true, default: "" },
     paidAt: { type: Date, default: null },
+    escrowStatus: {
+      type: String,
+      enum: ["none", "held", "released", "failed"],
+      default: "none",
+    },
+    rentalChargePkr: { type: Number, default: 0 },
+    refundAmountPkr: { type: Number, default: 0 },
+    stripeRefundId: { type: String, trim: true, default: "" },
+    escrowHeldAt: { type: Date, default: null },
+    escrowReleasedAt: { type: Date, default: null },
+    returnConfirmedAt: { type: Date, default: null },
+    refundedAt: { type: Date, default: null },
+    fulfillmentStatus: {
+      type: String,
+      enum: ["processing", "shipped", "delivered", "returned"],
+      default: "processing",
+    },
     shipping: {
       fullName: { type: String, trim: true, default: "" },
       phone: { type: String, trim: true, default: "" },
@@ -105,6 +124,23 @@ function formatDateLabel(start, end) {
   return `${format(start)} - ${format(end)}`;
 }
 
+function embeddedProductFields(doc) {
+  const product = doc.productId;
+  const seller = doc.sellerId;
+  const fields = {};
+
+  if (product && typeof product === "object" && product._id) {
+    fields.productTitle = product.title || "";
+    fields.productImage = product.mainImage || product.gallery?.[0] || "";
+    fields.productBrand = product.brand || "";
+  }
+  if (seller && typeof seller === "object" && seller.name) {
+    fields.sellerName = seller.name;
+  }
+
+  return fields;
+}
+
 orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   const id = this._id.toString();
   const dressId =
@@ -114,6 +150,12 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
     paymentStatus: this.paymentStatus || "unpaid",
     amountPkr: this.amountPkr || 0,
     paidAt: this.paidAt,
+    fulfillmentStatus: this.fulfillmentStatus || FULFILLMENT.PROCESSING,
+    fulfillmentLabel: getFulfillmentLabel(this),
+    escrowStatus: this.escrowStatus || "none",
+    escrowLabel: getEscrowLabel(this),
+    rentalChargePkr: this.rentalChargePkr || 0,
+    refundAmountPkr: this.refundAmountPkr || 0,
   };
 
   if (this.status === "cancelled" || this.status === "rejected") {
@@ -140,6 +182,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
         { id: "details", label: "View Details", variant: "outline", link: true },
         { id: "remove", label: "Remove from Order List", variant: "danger" },
       ],
+      ...embeddedProductFields(this),
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
@@ -186,6 +229,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
         { id: "details", label: "View Details", variant: "outline", link: true },
         { id: "cancel", label: "Cancel Request", variant: "danger" },
       ],
+      ...embeddedProductFields(this),
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
@@ -193,8 +237,82 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
 
   if (this.status === "approved") {
     const isSale = this.type === "sale";
-    const rentalNeedsPay =
-      !isSale && this.paymentStatus !== "paid";
+    const rentalNeedsPay = !isSale && this.paymentStatus !== "paid";
+    const fs = this.fulfillmentStatus || FULFILLMENT.PROCESSING;
+    const fulfillmentLabel = getFulfillmentLabel(this);
+
+    let buyerStatus = "processing";
+    if (isSale) {
+      buyerStatus =
+        fs === FULFILLMENT.DELIVERED
+          ? "delivered"
+          : fs === FULFILLMENT.SHIPPED
+            ? "shipped"
+            : "paid";
+    } else if (rentalNeedsPay) {
+      buyerStatus = "awaiting-payment";
+    } else if (fs === FULFILLMENT.RETURNED) {
+      buyerStatus = "returned";
+    } else if (fs === FULFILLMENT.DELIVERED) {
+      buyerStatus = "rental-active";
+    } else if (fs === FULFILLMENT.SHIPPED) {
+      buyerStatus = "shipped";
+    } else {
+      buyerStatus = "processing";
+    }
+
+    const actions = [
+      { id: "details", label: "View Details", variant: "outline", link: true },
+    ];
+
+    if (rentalNeedsPay) {
+      actions.push({
+        id: "checkout",
+        label: "Proceed to Checkout",
+        variant: "primary",
+        link: true,
+      });
+    } else if (this.paymentStatus === "paid" && fs === FULFILLMENT.SHIPPED) {
+      actions.push({
+        id: "confirm-received",
+        label: "Confirm Received",
+        variant: "primary",
+      });
+    } else if (
+      !isSale &&
+      this.paymentStatus === "paid" &&
+      fs === FULFILLMENT.DELIVERED
+    ) {
+      const canReturn = isRentalPeriodComplete(this.rentEnd);
+      actions.push({
+        id: "mark-returned",
+        label: "Mark as Returned",
+        variant: "primary",
+        disabled: !canReturn,
+        disabledReason: getReturnAvailableLabel(this.rentEnd),
+      });
+    }
+
+    const rentalMeta =
+      !isSale && !rentalNeedsPay && fs === FULFILLMENT.DELIVERED
+        ? [
+            { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
+            {
+              icon: "check-circle",
+              text: isRentalPeriodComplete(this.rentEnd)
+                ? "Rental period ended — you can mark the item as returned"
+                : getReturnAvailableLabel(this.rentEnd),
+              highlight: isRentalPeriodComplete(this.rentEnd),
+            },
+          ]
+        : [
+            { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
+            {
+              icon: "check-circle",
+              text: formatRentalPeriod(this.rentStart, this.rentEnd) || fulfillmentLabel,
+              highlight: true,
+            },
+          ];
 
     return {
       id,
@@ -208,16 +326,8 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       rentalDays: this.rentalDays,
       rentStart: this.rentStart,
       rentEnd: this.rentEnd,
-      status: isSale
-        ? "paid"
-        : rentalNeedsPay
-          ? "awaiting-payment"
-          : "rental-active",
-      statusLabel: isSale
-        ? "Paid — Shipping"
-        : rentalNeedsPay
-          ? "Awaiting Payment"
-          : "Rental Active",
+      status: buyerStatus,
+      statusLabel: fulfillmentLabel,
       ...payment,
       meta: isSale
         ? [
@@ -225,40 +335,25 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
               icon: "check-circle",
               text:
                 this.paymentStatus === "paid"
-                  ? "Payment confirmed via Stripe"
-                  : "Order approved",
+                  ? `Payment confirmed — ${fulfillmentLabel}`
+                  : "Complete checkout to confirm",
               highlight: true,
             },
           ]
         : rentalNeedsPay
           ? [
               { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
-              {
-                icon: "clock",
-                text: "Seller approved — pay security deposit via Stripe",
-              },
+              { icon: "clock", text: "Seller approved — pay security deposit" },
             ]
-          : [
-              { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
-              { icon: "check-circle", text: "Paid — Rental Active", highlight: true },
-            ],
-      actions: [
-        { id: "details", label: "View Details", variant: "outline", link: true },
-        ...(rentalNeedsPay
-          ? [{ id: "checkout", label: "Proceed to Checkout", variant: "primary", link: true }]
-          : isSale
-            ? []
-            : [
-                {
-                  id: "rent-again",
-                  label: "Rent Again",
-                  variant: "ghost",
-                  icon: "history",
-                  alignEnd: true,
-                  link: true,
-                },
-              ]),
-      ],
+          : rentalMeta,
+      actions,
+      canMarkReturned:
+        !isSale &&
+        this.paymentStatus === "paid" &&
+        fs === FULFILLMENT.DELIVERED &&
+        isRentalPeriodComplete(this.rentEnd),
+      returnAvailableLabel: getReturnAvailableLabel(this.rentEnd),
+      ...embeddedProductFields(this),
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };
@@ -298,6 +393,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
         link: true,
       },
     ],
+    ...embeddedProductFields(this),
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };
@@ -326,6 +422,15 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
     rentStart: this.rentStart,
     rentEnd: this.rentEnd,
     dateLabel: formatDateLabel(this.rentStart, this.rentEnd),
+    paymentStatus: this.paymentStatus || "unpaid",
+    fulfillmentStatus: this.fulfillmentStatus || FULFILLMENT.PROCESSING,
+    fulfillmentLabel: getFulfillmentLabel(this),
+    escrowStatus: this.escrowStatus || "none",
+    escrowLabel: getEscrowLabel(this),
+    rentalChargePkr: this.rentalChargePkr || 0,
+    refundAmountPkr: this.refundAmountPkr || 0,
+    amountPkr: this.amountPkr || 0,
+    ...embeddedProductFields(this),
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,
   };
@@ -336,18 +441,48 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
       status: "Pending",
       statusVariant: "pending",
       dateIcon: "calendar",
-      actions: "approve-reject",
+      actions: [
+        { id: "reject", label: "Reject", variant: "outline" },
+        { id: "approve", label: "Approve", variant: "primary" },
+      ],
       dimmed: false,
     };
   }
 
   if (this.status === "approved") {
+    const fs = this.fulfillmentStatus || FULFILLMENT.PROCESSING;
+    const actions = [
+      { id: "details", label: "View Details", variant: "outline", link: true },
+    ];
+
+    if (this.paymentStatus === "paid") {
+      const escrowPendingRelease =
+        this.type === "rental" &&
+        this.escrowStatus !== "released" &&
+        this.escrowStatus !== "failed";
+
+      if (fs === FULFILLMENT.PROCESSING) {
+        actions.push({ id: "ship", label: "Mark as Shipped", variant: "primary" });
+      } else if (this.type === "rental" && fs === FULFILLMENT.RETURNED && escrowPendingRelease) {
+        actions.push({
+          id: "confirm-return",
+          label: "Confirm Return Received",
+          variant: "primary",
+        });
+      } else if (
+        (this.type === "sale" && fs === FULFILLMENT.DELIVERED) ||
+        (this.type === "rental" && fs === FULFILLMENT.RETURNED && this.escrowStatus === "released")
+      ) {
+        actions.push({ id: "complete", label: "Mark as Completed", variant: "primary" });
+      }
+    }
+
     return {
       ...base,
-      status: "Approved",
-      statusVariant: "approved",
+      status: getFulfillmentLabel(this),
+      statusVariant: getFulfillmentVariant(this),
       dateIcon: "calendar-check",
-      actions: "complete",
+      actions,
       dimmed: false,
     };
   }
@@ -355,10 +490,10 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
   if (this.status === "completed") {
     return {
       ...base,
-      status: "Completed",
+      status: getFulfillmentLabel(this),
       statusVariant: "completed",
       dateIcon: "check",
-      actions: "view",
+      actions: [{ id: "details", label: "View Details", variant: "outline", link: true }],
       dimmed: true,
     };
   }
@@ -368,7 +503,7 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
     status: this.status === "rejected" ? "Rejected" : "Cancelled",
     statusVariant: "completed",
     dateIcon: "calendar",
-    actions: "view",
+    actions: [{ id: "details", label: "View Details", variant: "outline", link: true }],
     dimmed: true,
   };
 };
