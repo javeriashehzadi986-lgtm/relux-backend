@@ -202,20 +202,21 @@ async function buildBidHistory(productId, limit = 20) {
   });
 }
 
-async function getApprovedProduct(productId) {
+async function getApprovedProduct(productId, { allowSold = false } = {}) {
   if (!mongoose.Types.ObjectId.isValid(productId)) {
     return null;
   }
 
   return Product.findOne({
     _id: productId,
-    ...PUBLIC_LISTING_FILTER,
+    verificationStatus: "approved",
+    status: allowSold ? { $in: ["active", "sold"] } : "active",
   });
 }
 
 async function getProductBids(req, res) {
   try {
-    const product = await getApprovedProduct(req.params.productId);
+    const product = await getApprovedProduct(req.params.productId, { allowSold: true });
     if (!product) {
       return res.status(404).json({ message: "Listing not found" });
     }

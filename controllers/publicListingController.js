@@ -25,8 +25,46 @@ async function listPublicListings(req, res) {
       }
     }
 
-    const listings = await Product.find(filter).sort({ createdAt: -1 });
-    res.json({ listings: listings.map((listing) => listing.toPublicJSON()) });
+    const listings = await Product.find(filter)
+      .select("-gallery")
+      .sort({ createdAt: -1 })
+      .limit(24)
+      .maxTimeMS(12000)
+      .lean();
+
+    res.json({
+      listings: listings.map((listing) => {
+        const mainImage =
+          typeof listing.mainImage === "string" && listing.mainImage.length > 50000
+            ? ""
+            : listing.mainImage;
+        return {
+          id: listing._id,
+          sellerId: listing.sellerId,
+          title: listing.title,
+          brand: listing.brand,
+          description: listing.description,
+          listingType: listing.listingType,
+          listingSize: listing.listingSize,
+          listingCondition: listing.listingCondition,
+          mainCategory: listing.mainCategory,
+          style: listing.style,
+          clothingType: listing.clothingType,
+          salePrice: listing.salePrice,
+          startingBid: listing.startingBid,
+          minBid: listing.minBid,
+          auctionEndDate: listing.auctionEndDate,
+          rentPrice: listing.rentPrice,
+          itemPrice: listing.itemPrice,
+          mainImage,
+          gallery: [],
+          verificationStatus: listing.verificationStatus,
+          status: listing.status,
+          submittedAt: listing.createdAt,
+          reviewedAt: listing.reviewedAt,
+        };
+      }),
+    });
   } catch (error) {
     res.status(500).json({ message: getErrorMessage(error) });
   }
@@ -36,7 +74,8 @@ async function getPublicListing(req, res) {
   try {
     const listing = await Product.findOne({
       _id: req.params.id,
-      ...publicListingFilter,
+      verificationStatus: "approved",
+      status: { $in: ["active", "sold"] },
     });
 
     if (!listing) {
