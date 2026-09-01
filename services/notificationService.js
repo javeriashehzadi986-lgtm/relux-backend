@@ -172,6 +172,8 @@ function notifyEscrowReleased({
   orderId,
   refundLabel,
   rentalChargeLabel,
+  sellerPayoutLabel,
+  transferSent = false,
 }) {
   const refundText =
     refundLabel && refundLabel !== "PKR 0"
@@ -192,7 +194,11 @@ function notifyEscrowReleased({
     notifyUser({
       userId: sellerId,
       title: "Escrow Settled",
-      message: `You confirmed the return. ${refundText}`,
+      message: sellerPayoutLabel
+        ? transferSent
+          ? `${sellerPayoutLabel} sent to your Stripe account after rental settlement.`
+          : `${sellerPayoutLabel} recorded for your payout. Link Stripe Connect to receive bank transfers.`
+        : `Rental escrow settled. Rental charges: ${rentalChargeLabel || "PKR 0"}.`,
       highlight: productTitle,
       category: "payments",
       iconVariant: "primary",
@@ -422,6 +428,144 @@ function notifyReportResolved({ reporterId, reporterRole, reportId, subject, dec
   });
 }
 
+function notifySettlementProposed({
+  buyerId,
+  productTitle,
+  orderId,
+  refundLabel,
+  rentalChargeLabel,
+  damageLabel,
+}) {
+  return notifyUser({
+    userId: buyerId,
+    title: "Review Rental Settlement",
+    message: `The seller proposed a settlement: rent ${rentalChargeLabel || "PKR 0"}, damage ${damageLabel || "PKR 0"}, refund ${refundLabel || "PKR 0"}. Accept or dispute in My Orders.`,
+    highlight: productTitle,
+    category: "payments",
+    iconVariant: "tertiary",
+    link: "/profile?section=orders",
+    meta: orderId ? { orderId: String(orderId) } : undefined,
+  });
+}
+
+function notifySettlementAccepted({ buyerId, sellerId, productTitle, orderId }) {
+  return Promise.all([
+    notifyUser({
+      userId: buyerId,
+      title: "Settlement Accepted",
+      message: "You accepted the rental settlement. Escrow is being released.",
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "tertiary",
+      link: "/profile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+    notifyUser({
+      userId: sellerId,
+      title: "Settlement Accepted",
+      message: "The buyer accepted your settlement proposal. Escrow is being released.",
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "primary",
+      link: "/sellerProfile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+  ]);
+}
+
+function notifySettlementDisputed({ buyerId, sellerId, productTitle, orderId }) {
+  return Promise.all([
+    notifyUser({
+      userId: buyerId,
+      title: "Settlement Disputed",
+      message: "Your dispute was submitted. An admin will review and set the final escrow split.",
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "tertiary",
+      link: "/profile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+    notifyUser({
+      userId: sellerId,
+      title: "Settlement Disputed",
+      message: "The buyer disputed your settlement proposal. Escrow is frozen until admin resolves it.",
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "primary",
+      link: "/sellerProfile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+  ]);
+}
+
+function notifySaleDeliveryDisputed({ buyerId, sellerId, productTitle, orderId }) {
+  return Promise.all([
+    notifyUser({
+      userId: buyerId,
+      title: "Delivery Dispute Submitted",
+      message: "Your report was sent to admin. Payment stays in escrow until the issue is resolved.",
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "tertiary",
+      link: "/profile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+    notifyUser({
+      userId: sellerId,
+      title: "Buyer Reported Delivery Issue",
+      message: "The buyer reported a delivery problem. Payment is held until admin reviews the case.",
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "primary",
+      link: "/sellerProfile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+  ]);
+}
+
+function notifySaleEscrowReleased({
+  buyerId,
+  sellerId,
+  productTitle,
+  orderId,
+  refundLabel,
+  sellerPayoutLabel,
+  transferSent = false,
+}) {
+  const buyerMsg =
+    refundLabel && refundLabel !== "PKR 0"
+      ? `Escrow settled — ${refundLabel} refunded to you.`
+      : "You confirmed receipt. Payment was released to the seller.";
+  const sellerMsg = sellerPayoutLabel
+    ? transferSent
+      ? `Escrow released — ${sellerPayoutLabel} sent to your Stripe account.`
+      : `Escrow released — ${sellerPayoutLabel} recorded. Link Stripe Connect in your profile to receive bank payouts.`
+    : "Escrow was released for this sale.";
+
+  return Promise.all([
+    notifyUser({
+      userId: buyerId,
+      title: "Purchase Escrow Updated",
+      message: buyerMsg,
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "tertiary",
+      link: "/profile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+    notifyUser({
+      userId: sellerId,
+      title: "Sale Payment Released",
+      message: sellerMsg,
+      highlight: productTitle,
+      category: "payments",
+      iconVariant: "primary",
+      link: "/sellerProfile?section=orders",
+      meta: orderId ? { orderId: String(orderId) } : undefined,
+    }),
+  ]);
+}
+
 module.exports = {
   createNotification,
   notifyUser,
@@ -449,4 +593,9 @@ module.exports = {
   notifyRentalOrderPaid,
   notifySellerDispatchDetails,
   notifyReportResolved,
+  notifySettlementProposed,
+  notifySettlementAccepted,
+  notifySettlementDisputed,
+  notifySaleDeliveryDisputed,
+  notifySaleEscrowReleased,
 };

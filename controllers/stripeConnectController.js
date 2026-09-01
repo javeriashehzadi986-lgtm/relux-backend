@@ -1,5 +1,6 @@
 const SellerVerification = require("../models/SellerVerification");
 const { getStripe, getFrontendUrl } = require("../services/stripeService");
+const { syncSellerConnectAccount } = require("../services/stripeConnectService");
 
 function getErrorMessage(error) {
   if (error?.type === "StripeInvalidRequestError") {
@@ -12,19 +13,14 @@ function getErrorMessage(error) {
 }
 
 async function syncConnectFlags(verification) {
-  if (!verification?.stripeAccountId) {
-    verification.stripeConnected = false;
+  if (!verification?.userId) {
     return { verification, account: null };
   }
-
-  const stripe = getStripe();
-  const account = await stripe.accounts.retrieve(verification.stripeAccountId);
-  const connected = Boolean(
-    account.details_submitted && (account.charges_enabled || account.payouts_enabled),
-  );
-  verification.stripeConnected = connected;
-  await verification.save();
-  return { verification, account };
+  const synced = await syncSellerConnectAccount(verification.userId);
+  return {
+    verification: synced.verification || verification,
+    account: synced.account,
+  };
 }
 
 /** Seller: start or resume Stripe Connect Express onboarding */
@@ -78,7 +74,12 @@ async function createConnectOnboardingLink(req, res) {
     });
   } catch (error) {
     console.error("[stripe connect]", error);
-    res.status(500).json({ message: getErrorMessage(error) });
+    const message = getErrorMessage(error);
+    const hint =
+      message.includes("signed up for Connect") || message.includes("Connect")
+        ? " Enable Stripe Connect at https://dashboard.stripe.com/connect and retry."
+        : "";
+    res.status(500).json({ message: message + hint });
   }
 }
 

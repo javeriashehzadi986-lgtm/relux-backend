@@ -1,3 +1,4 @@
+const mongoose = require("mongoose");
 const {
   parseAmount,
   calculateRentalEscrow,
@@ -6,6 +7,9 @@ const {
   releaseRentalEscrow,
 } = require("../services/escrowService");
 
+jest.mock("../models/SellerVerification", () => ({
+  findOne: jest.fn().mockResolvedValue(null),
+}));
 describe("Escrow Service — Chapter 5: Rental Payment Hold & Release", () => {
   describe("parseAmount", () => {
     it("TC-ES-01: parses PKR formatted strings", () => {
@@ -32,6 +36,20 @@ describe("Escrow Service — Chapter 5: Rental Payment Hold & Release", () => {
         { rentPrice: "2000" },
       );
       expect(result.refundAmountPkr).toBe(0);
+      expect(result.sellerPayoutPkr).toBe(5000);
+      expect(result.additionalChargePkr).toBe(15000);
+    });
+
+    it("TC-ES-03b: includes damage in total deductions", () => {
+      const result = calculateRentalEscrow(
+        { amountPkr: 50000, rentalDays: 3 },
+        { rentPrice: "2000" },
+        { damageDeductionPkr: 5000 },
+      );
+      expect(result.rentalChargePkr).toBe(6000);
+      expect(result.damageDeductionPkr).toBe(5000);
+      expect(result.refundAmountPkr).toBe(39000);
+      expect(result.sellerPayoutPkr).toBe(11000);
     });
   });
 
@@ -83,9 +101,11 @@ describe("Escrow Service — Chapter 5: Rental Payment Hold & Release", () => {
       const save = jest.fn();
       const order = {
         _id: "order1",
+        sellerId: new mongoose.Types.ObjectId(),
         type: "rental",
         paymentStatus: "paid",
         escrowStatus: "held",
+        escrowSettlementStatus: "accepted",
         amountPkr: 50000,
         rentalDays: 3,
         productId: { itemPrice: 50000, rentPrice: 2000 },
@@ -97,6 +117,21 @@ describe("Escrow Service — Chapter 5: Rental Payment Hold & Release", () => {
       expect(result.refundAmountPkr).toBe(44000);
       expect(order.escrowStatus).toBe("released");
       expect(save).toHaveBeenCalled();
+    });
+
+    it("TC-ES-09b: blocks release before buyer accepts settlement", async () => {
+      await expect(
+        releaseRentalEscrow({
+          type: "rental",
+          paymentStatus: "paid",
+          escrowStatus: "held",
+          escrowSettlementStatus: "proposed",
+          amountPkr: 50000,
+          rentalDays: 3,
+          productId: { itemPrice: 50000, rentPrice: 2000 },
+          save: jest.fn(),
+        }),
+      ).rejects.toThrow(/buyer accepts or admin resolves/);
     });
 
     it("TC-ES-10: skips duplicate release when already released", async () => {

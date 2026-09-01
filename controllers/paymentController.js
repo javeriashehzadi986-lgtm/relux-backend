@@ -505,6 +505,10 @@ async function markOrderPaidFromSession(session, orderDoc) {
   if (order.type === "rental") {
     order.escrowStatus = "held";
     order.escrowHeldAt = new Date();
+  } else if (order.type === "sale") {
+    order.escrowStatus = "held";
+    order.escrowHeldAt = new Date();
+    order.sellerPayoutPkr = order.itemAmountPkr || order.amountPkr || 0;
   }
   await order.save();
   await syncProductForOrder(order);

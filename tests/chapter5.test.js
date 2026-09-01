@@ -44,7 +44,7 @@ const { createListing } = require("../controllers/listingController");
 const { placeBid } = require("../controllers/bidController");
 const { createSaleCheckout, createRentalCheckout } = require("../controllers/paymentController");
 const { createSellerReview } = require("../controllers/reviewController");
-const { applyAsSeller } = require("../controllers/sellerVerificationController");
+const { submitVerification } = require("../controllers/sellerVerificationController");
 const { approveListing } = require("../controllers/adminListingController");
 const { createRentalRequest } = require("../controllers/buyerOrderController");
 
@@ -180,6 +180,7 @@ describe("Chapter 5 — Unit Testing (UT)", () => {
         sellerId: "seller1",
         listingType: "sale",
         verificationStatus: "approved",
+        status: "active",
         title: "Gown",
         mainImage: "https://example.com/a.jpg",
         startingBid: "10000",
@@ -295,22 +296,26 @@ describe("Chapter 5 — Functional Testing (FT)", () => {
     releaseEmailForNewSignup.mockResolvedValue({ blocked: false });
   });
 
-  describe("FT1 — Seller Registration with CNIC Verification Pending", () => {
-    it("creates seller user with status pending and verification record", async () => {
+  describe("FT1 — Buyer applies for seller verification (CNIC pending)", () => {
+    it("upgrades buyer to pending seller and creates verification record", async () => {
       const userId = new mongoose.Types.ObjectId();
-      User.create = jest.fn().mockResolvedValue({
+      const user = {
         _id: userId,
+        role: "buyer",
+        status: "active",
+        phone: "",
+        city: "",
+        save: jest.fn().mockResolvedValue(undefined),
         toPublicJSON: () => ({ role: "seller", status: "pending" }),
-      });
-      SellerVerification.create = jest.fn().mockResolvedValue({
+      };
+      User.findById = jest.fn().mockResolvedValue(user);
+      SellerVerification.findOneAndUpdate = jest.fn().mockResolvedValue({
         toPublicJSON: () => ({ verificationStatus: "pending" }),
       });
 
       const req = mockReq({
+        user: { _id: userId, role: "buyer" },
         body: {
-          name: "Sara",
-          email: "sara@test.com",
-          password: "secret12",
           phone: "03001234567",
           city: "Lahore",
           cnicFront: "https://example.com/front.jpg",
@@ -319,14 +324,15 @@ describe("Chapter 5 — Functional Testing (FT)", () => {
       });
       const res = mockRes();
 
-      await applyAsSeller(req, res);
+      await submitVerification(req, res);
 
-      expect(res.statusCode).toBe(201);
-      expect(User.create).toHaveBeenCalledWith(
-        expect.objectContaining({ role: "seller", status: "pending" }),
-      );
-      expect(SellerVerification.create).toHaveBeenCalledWith(
+      expect(res.statusCode).toBe(200);
+      expect(user.role).toBe("seller");
+      expect(user.status).toBe("pending");
+      expect(SellerVerification.findOneAndUpdate).toHaveBeenCalledWith(
+        { userId },
         expect.objectContaining({ verificationStatus: "pending" }),
+        expect.any(Object),
       );
     });
   });
@@ -375,6 +381,7 @@ describe("Chapter 5 — Functional Testing (FT)", () => {
         sellerId: "seller1",
         listingType: "sale",
         verificationStatus: "approved",
+        status: "active",
         title: "Gown",
         auctionEndDate: new Date(Date.now() - 1000).toISOString(),
         startingBid: "10000",
@@ -543,6 +550,7 @@ describe("Chapter 5 — Integration Testing (IT)", () => {
         sellerId: "seller1",
         listingType: "sale",
         verificationStatus: "approved",
+        status: "active",
         title: "Item",
         auctionEndDate: new Date(Date.now() - 1000).toISOString(),
         startingBid: "5000",

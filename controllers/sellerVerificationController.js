@@ -1,7 +1,6 @@
 const User = require("../models/User");
 const SellerVerification = require("../models/SellerVerification");
 const { signToken } = require("../middleware/auth");
-const { releaseEmailForNewSignup } = require("../utils/releaseBlockedEmail");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -17,68 +16,16 @@ function validateCnicDocuments(cnicFront, cnicBack) {
   return null;
 }
 
-async function applyAsSeller(req, res) {
-  try {
-    const { name, email, password, phone, city, cnicFront, cnicBack } = req.body;
-
-    if (!name?.trim() || !email?.trim() || !password || !phone?.trim() || !city?.trim()) {
-      return res.status(400).json({
-        message: "Name, email, password, phone, and city are required",
-      });
-    }
-
-    if (password.length < 6) {
-      return res.status(400).json({ message: "Password must be at least 6 characters" });
-    }
-
-    const cnicError = validateCnicDocuments(cnicFront, cnicBack);
-    if (cnicError) {
-      return res.status(400).json({ message: cnicError });
-    }
-
-    const emailNorm = email.toLowerCase().trim();
-    const { blocked } = await releaseEmailForNewSignup(emailNorm);
-    if (blocked) {
-      return res.status(409).json({
-        message: "Email already registered. Please log in with your existing account.",
-        code: "EMAIL_IN_USE",
-      });
-    }
-
-    const user = await User.create({
-      name: name.trim(),
-      email: emailNorm,
-      password,
-      phone: phone.trim(),
-      city: city.trim(),
-      role: "seller",
-      status: "pending",
-    });
-
-    const verification = await SellerVerification.create({
-      userId: user._id,
-      cnicFront: cnicFront.trim(),
-      cnicBack: cnicBack.trim(),
-      verificationStatus: "pending",
-    });
-
-    const token = signToken(user);
-    res.status(201).json({
-      token,
-      user: user.toPublicJSON(),
-      verification: verification.toPublicJSON(),
-    });
-  } catch (error) {
-    res.status(500).json({ message: getErrorMessage(error) });
-  }
-}
-
 async function submitVerification(req, res) {
   try {
     const { phone, city, cnicFront, cnicBack } = req.body;
 
     if (req.user.role === "admin") {
       return res.status(403).json({ message: "Admins cannot submit seller verification" });
+    }
+
+    if (req.user.role === "seller" && req.user.status === "active") {
+      return res.status(400).json({ message: "You are already an approved seller" });
     }
 
     if (!phone?.trim() || !city?.trim()) {
@@ -173,7 +120,6 @@ async function getMyVerification(req, res) {
 }
 
 module.exports = {
-  applyAsSeller,
   submitVerification,
   updateDocuments,
   getMyVerification,

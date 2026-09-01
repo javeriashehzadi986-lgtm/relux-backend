@@ -5,12 +5,14 @@ const {
   notifyRentalCancelled,
   notifyBuyerConfirmedReceipt,
   notifyBuyerMarkedReturn,
+  notifySaleEscrowReleased,
 } = require("../services/notificationService");
 const {
   FULFILLMENT,
   ensurePaid,
   isRentalPeriodComplete,
 } = require("../services/orderStatusService");
+const { releaseSaleEscrow } = require("../services/escrowService");
 
 function getErrorMessage(error) {
   if (error.code === 11000) {
@@ -240,6 +242,37 @@ async function confirmReceivedOrder(req, res) {
     }
 
     order.fulfillmentStatus = FULFILLMENT.DELIVERED;
+    order.deliveryConfirmedAt = new Date();
+
+    if (order.type === "sale" && order.escrowStatus === "held") {
+      if (order.escrowSettlementStatus === "disputed") {
+        return res.status(400).json({
+          message: "Escrow is frozen while admin reviews your delivery dispute",
+        });
+      }
+      await order.save();
+      const result = await releaseSaleEscrow(order, {}, "buyer_confirmed");
+      const product = await Product.findById(order.productId).select("title");
+      notifyBuyerConfirmedReceipt({
+        sellerId: order.sellerId,
+        productTitle: product?.title ?? "your item",
+        orderId: order._id,
+      });
+      notifySaleEscrowReleased({
+        buyerId: order.buyerId,
+        sellerId: order.sellerId,
+        productTitle: product?.title ?? "purchase",
+        orderId: order._id,
+        refundLabel: "",
+        sellerPayoutLabel: `PKR ${(result.sellerPayoutPkr || 0).toLocaleString("en-PK")}`,
+        transferSent: Boolean(result.stripeTransferId),
+      });
+      return res.json({
+        message: "Receipt confirmed — payment released to seller",
+        order: result.order.toBuyerJSON(),
+      });
+    }
+
     await order.save();
 
     const product = await Product.findById(order.productId).select("title");

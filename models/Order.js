@@ -75,10 +75,49 @@ const orderSchema = new mongoose.Schema(
     },
     rentalChargePkr: { type: Number, default: 0 },
     refundAmountPkr: { type: Number, default: 0 },
+    damageDeductionPkr: { type: Number, default: 0 },
+    lateFeePkr: { type: Number, default: 0 },
+    sellerPayoutPkr: { type: Number, default: 0 },
+    escrowSettlementStatus: {
+      type: String,
+      enum: ["none", "proposed", "accepted", "disputed", "admin_settled", "released"],
+      default: "none",
+    },
+    settlementNote: { type: String, trim: true, default: "" },
+    settlementEvidence: { type: [String], default: [] },
+    settlementProposedAt: { type: Date, default: null },
+    settlementAcceptedAt: { type: Date, default: null },
+    settlementDisputedAt: { type: Date, default: null },
+    disputeReason: { type: String, trim: true, default: "" },
+    disputeReportId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "Report",
+      default: null,
+    },
+    adminSettlementNote: { type: String, trim: true, default: "" },
+    adminSettledBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: "User",
+      default: null,
+    },
     stripeRefundId: { type: String, trim: true, default: "" },
+    stripeTransferId: { type: String, trim: true, default: "" },
+    sellerPayoutStatus: {
+      type: String,
+      enum: ["none", "pending", "transferred", "ledger_only", "failed"],
+      default: "none",
+    },
     escrowHeldAt: { type: Date, default: null },
     escrowReleasedAt: { type: Date, default: null },
     returnConfirmedAt: { type: Date, default: null },
+    shippedAt: { type: Date, default: null },
+    deliveryConfirmedAt: { type: Date, default: null },
+    saleEscrowAutoReleaseAt: { type: Date, default: null },
+    saleEscrowReleaseReason: {
+      type: String,
+      enum: ["", "buyer_confirmed", "auto_release", "admin_settled"],
+      default: "",
+    },
     refundedAt: { type: Date, default: null },
     fulfillmentStatus: {
       type: String,
@@ -156,6 +195,18 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
     escrowLabel: getEscrowLabel(this),
     rentalChargePkr: this.rentalChargePkr || 0,
     refundAmountPkr: this.refundAmountPkr || 0,
+    damageDeductionPkr: this.damageDeductionPkr || 0,
+    lateFeePkr: this.lateFeePkr || 0,
+    sellerPayoutPkr: this.sellerPayoutPkr || 0,
+    escrowSettlementStatus: this.escrowSettlementStatus || "none",
+    settlementNote: this.settlementNote || "",
+    settlementEvidence: this.settlementEvidence || [],
+    disputeReason: this.disputeReason || "",
+    disputeReportId: this.disputeReportId?.toString?.() || "",
+    shippedAt: this.shippedAt || null,
+    deliveryConfirmedAt: this.deliveryConfirmedAt || null,
+    saleEscrowAutoReleaseAt: this.saleEscrowAutoReleaseAt || null,
+    saleEscrowReleaseReason: this.saleEscrowReleaseReason || "",
   };
 
   if (this.status === "cancelled" || this.status === "rejected") {
@@ -273,11 +324,33 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
         link: true,
       });
     } else if (this.paymentStatus === "paid" && fs === FULFILLMENT.SHIPPED) {
-      actions.push({
-        id: "confirm-received",
-        label: "Confirm Received",
-        variant: "primary",
-      });
+      if (isSale && this.escrowSettlementStatus === "disputed") {
+        actions.push({
+          id: "dispute-pending",
+          label: "Delivery Dispute Under Review",
+          variant: "outline",
+          disabled: true,
+        });
+      } else if (isSale && this.escrowStatus === "held") {
+        actions.push(
+          {
+            id: "confirm-received",
+            label: "Confirm Received",
+            variant: "primary",
+          },
+          {
+            id: "dispute-delivery",
+            label: "Report Delivery Issue",
+            variant: "outline",
+          },
+        );
+      } else {
+        actions.push({
+          id: "confirm-received",
+          label: "Confirm Received",
+          variant: "primary",
+        });
+      }
     } else if (
       !isSale &&
       this.paymentStatus === "paid" &&
@@ -291,6 +364,34 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
         disabled: !canReturn,
         disabledReason: getReturnAvailableLabel(this.rentEnd),
       });
+    } else if (
+      !isSale &&
+      this.paymentStatus === "paid" &&
+      fs === FULFILLMENT.RETURNED &&
+      this.escrowStatus !== "released"
+    ) {
+      const settlementStatus = this.escrowSettlementStatus || "none";
+      if (settlementStatus === "proposed") {
+        actions.push(
+          {
+            id: "accept-settlement",
+            label: "Accept Settlement",
+            variant: "primary",
+          },
+          {
+            id: "dispute-settlement",
+            label: "Dispute Settlement",
+            variant: "outline",
+          },
+        );
+      } else if (settlementStatus === "disputed") {
+        actions.push({
+          id: "dispute-pending",
+          label: "Dispute Under Review",
+          variant: "outline",
+          disabled: true,
+        });
+      }
     }
 
     const rentalMeta =
@@ -335,7 +436,11 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
               icon: "check-circle",
               text:
                 this.paymentStatus === "paid"
-                  ? `Payment confirmed — ${fulfillmentLabel}`
+                  ? this.escrowStatus === "held" && fs === FULFILLMENT.SHIPPED
+                    ? this.saleEscrowAutoReleaseAt
+                      ? `Payment held — confirm receipt or auto-releases ${new Date(this.saleEscrowAutoReleaseAt).toLocaleString("en-US", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" })}`
+                      : `Payment held — ${fulfillmentLabel}`
+                    : this.escrowLabel || `Payment confirmed — ${fulfillmentLabel}`
                   : "Complete checkout to confirm",
               highlight: true,
             },
@@ -429,6 +534,18 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
     escrowLabel: getEscrowLabel(this),
     rentalChargePkr: this.rentalChargePkr || 0,
     refundAmountPkr: this.refundAmountPkr || 0,
+    damageDeductionPkr: this.damageDeductionPkr || 0,
+    lateFeePkr: this.lateFeePkr || 0,
+    sellerPayoutPkr: this.sellerPayoutPkr || 0,
+    escrowSettlementStatus: this.escrowSettlementStatus || "none",
+    settlementNote: this.settlementNote || "",
+    settlementEvidence: this.settlementEvidence || [],
+    disputeReason: this.disputeReason || "",
+    disputeReportId: this.disputeReportId?.toString?.() || "",
+    shippedAt: this.shippedAt || null,
+    deliveryConfirmedAt: this.deliveryConfirmedAt || null,
+    saleEscrowAutoReleaseAt: this.saleEscrowAutoReleaseAt || null,
+    saleEscrowReleaseReason: this.saleEscrowReleaseReason || "",
     amountPkr: this.amountPkr || 0,
     ...embeddedProductFields(this),
     createdAt: this.createdAt,
@@ -463,17 +580,51 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
 
       if (fs === FULFILLMENT.PROCESSING) {
         actions.push({ id: "ship", label: "Mark as Shipped", variant: "primary" });
-      } else if (this.type === "rental" && fs === FULFILLMENT.RETURNED && escrowPendingRelease) {
-        actions.push({
-          id: "confirm-return",
-          label: "Confirm Return Received",
-          variant: "primary",
-        });
       } else if (
-        (this.type === "sale" && fs === FULFILLMENT.DELIVERED) ||
+        this.type === "rental" &&
+        fs === FULFILLMENT.RETURNED &&
+        escrowPendingRelease
+      ) {
+        const settlementStatus = this.escrowSettlementStatus || "none";
+        if (settlementStatus === "none") {
+          actions.push({
+            id: "propose-settlement",
+            label: "Propose Settlement",
+            variant: "primary",
+          });
+        } else if (settlementStatus === "proposed") {
+          actions.push({
+            id: "details",
+            label: "Awaiting Buyer Review",
+            variant: "outline",
+            disabled: true,
+          });
+        } else if (settlementStatus === "disputed") {
+          actions.push({
+            id: "details",
+            label: "Dispute — Admin Review",
+            variant: "outline",
+            disabled: true,
+          });
+        }
+      } else if (
+        (this.type === "sale" &&
+          fs === FULFILLMENT.DELIVERED &&
+          this.escrowStatus === "released") ||
         (this.type === "rental" && fs === FULFILLMENT.RETURNED && this.escrowStatus === "released")
       ) {
         actions.push({ id: "complete", label: "Mark as Completed", variant: "primary" });
+      } else if (
+        this.type === "sale" &&
+        fs === FULFILLMENT.SHIPPED &&
+        this.escrowStatus === "held"
+      ) {
+        actions.push({
+          id: "details",
+          label: "Awaiting Buyer Confirmation",
+          variant: "outline",
+          disabled: true,
+        });
       }
     }
 

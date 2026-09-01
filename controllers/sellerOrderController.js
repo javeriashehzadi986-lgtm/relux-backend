@@ -4,14 +4,13 @@ const {
   notifyBookingConfirmed,
   notifyBookingRejected,
   notifyRentalCompleted,
-  notifyEscrowReleased,
 } = require("../services/notificationService");
 const {
   FULFILLMENT,
   ensurePaid,
   syncProductForOrder,
 } = require("../services/orderStatusService");
-const { releaseRentalEscrow, formatPkr } = require("../services/escrowService");
+const { SALE_AUTO_RELEASE_MS } = require("../services/escrowService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -136,7 +135,12 @@ async function completeOrder(req, res) {
     const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
     if (order.type === "sale" && fs !== FULFILLMENT.DELIVERED) {
       return res.status(400).json({
-        message: "Mark the order as shipped and wait for buyer confirmation before completing",
+        message: "Buyer must confirm receipt before you can complete this sale",
+      });
+    }
+    if (order.type === "sale" && order.escrowStatus !== "released") {
+      return res.status(400).json({
+        message: "Payment must be released from escrow before completing this sale",
       });
     }
     if (order.type === "rental" && fs !== FULFILLMENT.RETURNED) {
@@ -187,68 +191,13 @@ async function shipOrder(req, res) {
     }
 
     order.fulfillmentStatus = FULFILLMENT.SHIPPED;
+    order.shippedAt = new Date();
+    if (order.type === "sale" && order.escrowStatus === "held") {
+      order.saleEscrowAutoReleaseAt = new Date(Date.now() + SALE_AUTO_RELEASE_MS);
+    }
     await order.save();
 
     res.json({ message: "Order marked as shipped", order: order.toSellerJSON() });
-  } catch (error) {
-    res.status(400).json({ message: error.message || getErrorMessage(error) });
-  }
-}
-
-async function confirmReturnOrder(req, res) {
-  try {
-    const order = await Order.findOne({
-      _id: req.params.id,
-      sellerId: req.user._id,
-    }).populate("productId", "title itemPrice rentPrice");
-
-    if (!order) {
-      return res.status(404).json({ message: "Order not found" });
-    }
-    if (order.type !== "rental") {
-      return res.status(400).json({ message: "Returns only apply to rental orders" });
-    }
-    if (order.status !== "approved") {
-      return res.status(400).json({ message: "Only active rentals can be returned" });
-    }
-    ensurePaid(order);
-
-    const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
-    if (fs !== FULFILLMENT.RETURNED) {
-      return res.status(400).json({
-        message: "Buyer must mark the item as returned before you confirm receipt",
-      });
-    }
-    if (order.escrowStatus === "released") {
-      return res.json({
-        message: "Escrow already released for this order",
-        order: order.toSellerJSON(),
-      });
-    }
-
-    const result = await releaseRentalEscrow(order);
-    const product = order.productId;
-
-    notifyEscrowReleased({
-      buyerId: order.buyerId,
-      sellerId: order.sellerId,
-      productTitle: product?.title ?? "rental item",
-      orderId: order._id,
-      refundLabel: formatPkr(result.refundAmountPkr),
-      rentalChargeLabel: formatPkr(result.rentalChargePkr),
-    });
-
-    res.json({
-      message:
-        result.refundAmountPkr > 0
-          ? `Return confirmed — ${formatPkr(result.refundAmountPkr)} refunded to buyer`
-          : "Return confirmed — escrow settled",
-      order: result.order.toSellerJSON(),
-      escrow: {
-        rentalChargePkr: result.rentalChargePkr,
-        refundAmountPkr: result.refundAmountPkr,
-      },
-    });
   } catch (error) {
     res.status(400).json({ message: error.message || getErrorMessage(error) });
   }
@@ -260,5 +209,4 @@ module.exports = {
   rejectOrder,
   completeOrder,
   shipOrder,
-  confirmReturnOrder,
 };

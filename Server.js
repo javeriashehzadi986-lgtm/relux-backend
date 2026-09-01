@@ -143,6 +143,15 @@ const startServer = async () => {
   };
   runAuctionFinalize();
   setInterval(runAuctionFinalize, 2 * 60 * 1000);
+
+  const { processSaleEscrowAutoReleases } = require("./services/escrowService");
+  const runSaleEscrowAutoRelease = () => {
+    processSaleEscrowAutoReleases().catch((error) => {
+      console.error("[saleEscrowAutoRelease]", error.message || error);
+    });
+  };
+  runSaleEscrowAutoRelease();
+  setInterval(runSaleEscrowAutoRelease, 15 * 60 * 1000);
 };
 
 startServer();
