@@ -403,6 +403,25 @@ function notifySaleOrderPaid({ sellerId, productTitle, orderId }) {
   });
 }
 
+function notifyReportResolved({ reporterId, reporterRole, reportId, subject, decision }) {
+  const link =
+    reporterRole === "seller"
+      ? "/sellerProfile?section=support"
+      : "/profile?section=support";
+
+  return notifyUser({
+    userId: reporterId,
+    title: "Support Request Resolved",
+    message:
+      decision ||
+      "Your support request has been reviewed and marked as resolved by our team.",
+    highlight: subject ? `#${reportId} — ${subject}` : `#${reportId}`,
+    category: "system",
+    iconVariant: "primary",
+    link,
+  });
+}
+
 module.exports = {
   createNotification,
   notifyUser,
@@ -429,4 +448,5 @@ module.exports = {
   notifySaleOrderPaid,
   notifyRentalOrderPaid,
   notifySellerDispatchDetails,
+  notifyReportResolved,
 };

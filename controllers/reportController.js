@@ -2,6 +2,7 @@ const Report = require("../models/Report");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const User = require("../models/User");
+const { notifyReportResolved } = require("../services/notificationService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -231,6 +232,8 @@ async function updateAdminReport(req, res) {
       return res.status(404).json({ message: "Report not found" });
     }
 
+    const wasResolved = report.status === "resolved";
+
     // Ask the involved seller to respond (dispute mediation)
     if (askSeller) {
       if (!report.involvedSellerId) {
@@ -297,6 +300,17 @@ async function updateAdminReport(req, res) {
     report.reviewedAt = new Date();
     report.reviewedBy = req.user._id;
     await report.save();
+
+    if (report.status === "resolved" && !wasResolved) {
+      const reporterId = report.reporterId?._id ?? report.reporterId;
+      notifyReportResolved({
+        reporterId,
+        reporterRole: report.reporterRole,
+        reportId: report.reportId,
+        subject: report.subject,
+        decision: report.decision || report.adminReply,
+      }).catch(() => {});
+    }
 
     res.json({ report: report.toAdminJSON() });
   } catch (error) {

@@ -42,8 +42,36 @@ function mapPaymentStatus(order) {
   if (order.paymentStatus === "refunded") return "refunded";
   if (order.paymentStatus === "failed") return "failed";
   if (order.paymentStatus === "pending") return "pending";
-  if (order.status === "cancelled" || order.status === "rejected") return "unpaid";
-  return order.paymentStatus || "unpaid";
+  return "unpaid";
+}
+
+/** Orders that belong on Admin → Payments (Stripe / money activity only). */
+function paymentsListFilter() {
+  return {
+    $or: [
+      // ✅ Paid — checkout complete, order approved or finished
+      {
+        paymentStatus: "paid",
+        status: { $in: ["approved", "completed"] },
+      },
+      // ✅ Refund issued
+      { paymentStatus: "refunded" },
+      // ✅ Stripe payment failed
+      {
+        paymentStatus: "failed",
+        $or: [
+          { stripeSessionId: { $ne: "" } },
+          { stripePaymentIntentId: { $ne: "" } },
+        ],
+      },
+      // ✅ Checkout opened on Stripe, not paid yet
+      {
+        paymentStatus: "pending",
+        stripeSessionId: { $ne: "" },
+        status: { $nin: ["cancelled", "rejected", "completed"] },
+      },
+    ],
+  };
 }
 
 function stripeStatusLabel(status) {
@@ -90,23 +118,19 @@ function toAdminPaymentJSON(order) {
   };
 }
 
-/** Admin: list real Stripe / order payments */
+/** Admin: Stripe transactions only — not unpaid orders (see Resale/Rental Orders). */
 async function listAdminPayments(req, res) {
   try {
-    const orders = await Order.find({
-      $or: [
-        { paymentStatus: { $in: ["paid", "pending", "refunded", "failed"] } },
-        { stripeSessionId: { $ne: "" } },
-        { paymentProvider: "stripe" },
-      ],
-    })
+    const orders = await Order.find(paymentsListFilter())
       .populate("buyerId", "name email")
       .populate("sellerId", "name email")
       .populate("productId", "title mainImage gallery")
       .sort({ paidAt: -1, updatedAt: -1, createdAt: -1 })
       .limit(500);
 
-    const payments = orders.map(toAdminPaymentJSON);
+    const payments = orders
+      .map(toAdminPaymentJSON)
+      .filter((p) => p.status !== "unpaid");
 
     const paid = payments.filter((p) => p.status === "paid");
     const resalePaid = paid.filter((p) => p.type === "resale");
@@ -121,7 +145,7 @@ async function listAdminPayments(req, res) {
       total: payments.length,
       stats: {
         totalTransactions: payments.length,
-        transactionTrend: `${paid.length} paid`,
+        transactionTrend: `${paid.length} paid · ${payments.filter((p) => p.status === "pending").length} pending checkout`,
         totalRevenue: formatPkr(totalRevenue),
         revenueProgress:
           payments.length === 0

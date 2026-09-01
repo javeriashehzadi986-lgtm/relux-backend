@@ -112,6 +112,7 @@ function rentalUiStatus(order) {
 function saleUiStatus(order) {
   if (order.status === "completed") return "completed";
   if (order.status === "cancelled" || order.status === "rejected") return "cancelled";
+  if (order.status === "pending" && order.paymentStatus !== "paid") return "pending";
   return order.fulfillmentStatus || "processing";
 }
 
@@ -216,9 +217,15 @@ function toSaleAdminJSON(order) {
   const image = productImage(product);
   const uiStatus = saleUiStatus(order);
   const deliveryStatus = saleDeliveryStatus(order);
-  const amount =
-    formatPkrAmount(order.itemAmountPkr || order.amountPkr) ||
+  const itemAmountPkr = Number(order.itemAmountPkr) || 0;
+  const deliveryChargesPkr = Number(order.deliveryChargesPkr) || 0;
+  const totalAmountPkr = Number(order.amountPkr) || itemAmountPkr + deliveryChargesPkr || 0;
+  const winningBid =
+    formatPkrAmount(itemAmountPkr) ||
+    formatPkrAmount(totalAmountPkr) ||
     formatMoney(product?.salePrice || product?.startingBid || product?.itemPrice);
+  const totalPaid = formatPkrAmount(totalAmountPkr) || winningBid;
+  const deliveryCharges = formatPkrAmount(deliveryChargesPkr);
   const id = order._id.toString();
   const paymentStatus = resolveSalePaymentStatus(order);
   const fulfillmentStatus = order.fulfillmentStatus || "processing";
@@ -260,7 +267,14 @@ function toSaleAdminJSON(order) {
     buyerAvatarClass: avatarClassFromId(String(buyer?._id || id)),
     seller: seller?.name || "Seller",
     sellerAvatarClass: avatarClassFromId(String(seller?._id || `${id}-s`)),
-    winningBid: amount,
+    winningBid,
+    totalPaid,
+    itemAmountPkr,
+    deliveryChargesPkr,
+    deliveryCharges,
+    amountPkr: totalAmountPkr,
+    paidAt: order.paidAt || null,
+    stripePaymentIntentId: order.stripePaymentIntentId || "",
     date: formatDateLabel(order.createdAt),
     status: uiStatus,
     statusLabel: fulfillmentLabel,
@@ -320,9 +334,14 @@ async function listResaleOrders(req, res) {
     const orders = await loadOrders("sale");
     const mapped = orders.map(toSaleAdminJSON);
 
-    const pending = mapped.filter((o) => o.status === "pending").length;
+    const pending = mapped.filter(
+      (o) => !["completed", "cancelled"].includes(o.status),
+    ).length;
     const activeDeliveries = mapped.filter(
-      (o) => o.deliveryStatus === "shipped" || o.deliveryStatus === "processing",
+      (o) =>
+        o.paymentStatus === "paid" &&
+        !["completed", "cancelled"].includes(o.status) &&
+        ["processing", "shipped", "delivered"].includes(o.deliveryStatus),
     ).length;
 
     res.json({
