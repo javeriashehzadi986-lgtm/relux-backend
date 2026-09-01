@@ -9,6 +9,10 @@ const userSchema = new mongoose.Schema(
     phone: { type: String, trim: true, default: "" },
     city: { type: String, trim: true, default: "" },
     address: { type: String, trim: true, default: "" },
+    returnContactName: { type: String, trim: true, default: "" },
+    returnPhone: { type: String, trim: true, default: "" },
+    returnCity: { type: String, trim: true, default: "" },
+    returnAddress: { type: String, trim: true, default: "" },
     googleId: { type: String, trim: true, sparse: true, unique: true },
     authProvider: { type: String, enum: ["local", "google"], default: "local" },
     // true = user chose a Relux password. false/missing for Google-only until they set one.
@@ -49,6 +53,21 @@ userSchema.methods.hasLocalPassword = function hasLocalPassword() {
   return this.passwordSetByUser !== false;
 };
 
+userSchema.methods.getReturnContactSnapshot = function getReturnContactSnapshot() {
+  return {
+    name: (this.returnContactName || this.name || "").trim(),
+    phone: (this.returnPhone || this.phone || "").trim(),
+    city: (this.returnCity || this.city || "").trim(),
+    address: (this.returnAddress || "").trim(),
+    email: (this.email || "").trim(),
+  };
+};
+
+userSchema.methods.hasCompleteReturnContact = function hasCompleteReturnContact() {
+  const contact = this.getReturnContactSnapshot();
+  return Boolean(contact.name && contact.phone && contact.city && contact.address);
+};
+
 userSchema.methods.toPublicJSON = function toPublicJSON() {
   return {
     id: this._id.toString(),
@@ -59,6 +78,10 @@ userSchema.methods.toPublicJSON = function toPublicJSON() {
     phone: this.phone,
     city: this.city,
     address: this.address,
+    returnContactName: this.returnContactName || "",
+    returnPhone: this.returnPhone || "",
+    returnCity: this.returnCity || "",
+    returnAddress: this.returnAddress || "",
     lastLoginAt: this.lastLoginAt,
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,

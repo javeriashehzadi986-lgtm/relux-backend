@@ -1,6 +1,6 @@
 const Notification = require("../models/Notification");
 const User = require("../models/User");
-const { sendNotificationEmail, sendSellerDispatchDetailsEmail } = require("./emailService");
+const { sendNotificationEmail, sendSellerDispatchDetailsEmail, sendBuyerReturnInstructionsEmail } = require("./emailService");
 
 function toUserId(value) {
   if (!value) return null;
@@ -162,6 +162,47 @@ function notifyBuyerMarkedReturn({ sellerId, productTitle, orderId }) {
     iconVariant: "primary",
     link: "/sellerProfile?section=orders",
     meta: orderId ? { orderId: String(orderId) } : undefined,
+  });
+}
+
+function hasOrderReturnContact(order) {
+  const contact = order?.sellerReturnContact || {};
+  return Boolean(
+    String(contact.name ?? "").trim() &&
+      String(contact.phone ?? "").trim() &&
+      String(contact.city ?? "").trim() &&
+      String(contact.address ?? "").trim(),
+  );
+}
+
+async function notifyBuyerReturnInstructions({ buyerId, order, productTitle }) {
+  if (order?.type !== "rental" || !hasOrderReturnContact(order)) {
+    return null;
+  }
+
+  const buyer = await User.findById(buyerId).select("email notificationPrefs");
+  if (!buyer?.email) return null;
+
+  try {
+    await sendBuyerReturnInstructionsEmail({
+      to: buyer.email,
+      order,
+      product: { title: productTitle },
+    });
+  } catch (error) {
+    console.error("[notificationService] return instructions email failed", error);
+  }
+
+  const contact = order.sellerReturnContact;
+  return notifyUser({
+    userId: buyerId,
+    title: "Return Instructions Available",
+    message: `Ship the rental back to ${contact.name} at ${contact.address}, ${contact.city}. Phone: ${contact.phone}. Full details are in My Orders and your email.`,
+    highlight: productTitle,
+    category: "orders",
+    iconVariant: "primary",
+    link: "/profile?section=orders",
+    meta: order._id ? { orderId: String(order._id) } : undefined,
   });
 }
 
@@ -576,6 +617,7 @@ module.exports = {
   notifyRentalCompleted,
   notifyBuyerConfirmedReceipt,
   notifyBuyerMarkedReturn,
+  notifyBuyerReturnInstructions,
   notifyEscrowReleased,
   notifyListingApproved,
   notifyListingRejected,

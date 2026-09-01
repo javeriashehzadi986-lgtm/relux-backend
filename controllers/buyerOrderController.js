@@ -5,6 +5,7 @@ const {
   notifyRentalCancelled,
   notifyBuyerConfirmedReceipt,
   notifyBuyerMarkedReturn,
+  notifyBuyerReturnInstructions,
   notifySaleEscrowReleased,
 } = require("../services/notificationService");
 const {
@@ -282,7 +283,20 @@ async function confirmReceivedOrder(req, res) {
       orderId: order._id,
     });
 
-    res.json({ message: "Receipt confirmed", order: order.toBuyerJSON() });
+    notifyBuyerReturnInstructions({
+      buyerId: order.buyerId,
+      order,
+      productTitle: product?.title ?? "your rental",
+    });
+
+    const fresh = await Order.findById(order._id)
+      .populate("productId", "title mainImage gallery brand listingType")
+      .populate("sellerId", "name");
+
+    res.json({
+      message: "Receipt confirmed",
+      order: fresh ? fresh.toBuyerJSON() : order.toBuyerJSON(),
+    });
   } catch (error) {
     res.status(400).json({ message: error.message || getErrorMessage(error) });
   }
@@ -328,7 +342,14 @@ async function markReturnedOrder(req, res) {
       orderId: order._id,
     });
 
-    res.json({ message: "Return recorded", order: order.toBuyerJSON() });
+    const fresh = await Order.findById(order._id)
+      .populate("productId", "title mainImage gallery brand listingType")
+      .populate("sellerId", "name");
+
+    res.json({
+      message: "Return recorded",
+      order: fresh ? fresh.toBuyerJSON() : order.toBuyerJSON(),
+    });
   } catch (error) {
     res.status(400).json({ message: error.message || getErrorMessage(error) });
   }

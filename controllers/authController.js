@@ -294,7 +294,18 @@ function getMe(req, res) {
 
 async function updateMe(req, res) {
   try {
-    const { name, phone, city, address, twoFactorEnabled, notificationPrefs } = req.body;
+    const {
+      name,
+      phone,
+      city,
+      address,
+      returnContactName,
+      returnPhone,
+      returnCity,
+      returnAddress,
+      twoFactorEnabled,
+      notificationPrefs,
+    } = req.body;
     const user = await User.findById(req.user._id);
 
     if (!user) {
@@ -318,6 +329,22 @@ async function updateMe(req, res) {
 
     if (address !== undefined) {
       user.address = address.trim();
+    }
+
+    if (returnContactName !== undefined) {
+      user.returnContactName = returnContactName.trim();
+    }
+
+    if (returnPhone !== undefined) {
+      user.returnPhone = returnPhone.trim();
+    }
+
+    if (returnCity !== undefined) {
+      user.returnCity = returnCity.trim();
+    }
+
+    if (returnAddress !== undefined) {
+      user.returnAddress = returnAddress.trim();
     }
 
     if (twoFactorEnabled !== undefined) {

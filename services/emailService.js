@@ -162,6 +162,107 @@ function buildDispatchDetailsText(details) {
   return lines.join("\n");
 }
 
+function buildReturnInstructionsDetails(order, product) {
+  const contact = order.sellerReturnContact || {};
+  const isRental = order.type === "rental";
+
+  return {
+    orderPublicId: order.orderId || String(order._id),
+    productTitle: product?.title || "Relux Hub item",
+    sellerName: formatDispatchField(contact.name),
+    sellerEmail: formatDispatchField(contact.email),
+    sellerPhone: formatDispatchField(contact.phone),
+    address: formatDispatchField(contact.address),
+    city: formatDispatchField(contact.city),
+    size: formatDispatchField(order.size),
+    rentStart: isRental ? formatDispatchField(order.rentStart) : "",
+    rentEnd: isRental ? formatDispatchField(order.rentEnd) : "",
+    rentalDays: isRental ? String(order.rentalDays || "—") : "",
+  };
+}
+
+function buildReturnInstructionsHtml(details) {
+  const rentalRows = details.rentStart
+    ? `
+      <tr><td style="padding:8px 0;color:#666;">Rental period</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.rentStart)} – ${escapeHtml(details.rentEnd)} (${escapeHtml(details.rentalDays)} days)</td></tr>
+    `
+    : "";
+
+  return `
+    <div style="font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#1a1a1a;">
+      <div style="padding:24px 0;border-bottom:1px solid #e8e0d8;">
+        <strong style="font-size:18px;color:#8b6914;">Relux Hub</strong>
+      </div>
+      <div style="padding:24px 0;">
+        <h1 style="margin:0 0 8px;font-size:22px;line-height:1.3;">Return instructions — ${escapeHtml(details.productTitle)}</h1>
+        <p style="margin:0 0 20px;font-size:15px;line-height:1.6;color:#444;">
+          You confirmed receipt of your rental. When the rental period ends, ship or drop off the item using the seller contact details below.
+        </p>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.5;">
+          <tr><td style="padding:8px 0;color:#666;">Order ID</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.orderPublicId)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Item</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.productTitle)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Size</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.size)}</td></tr>
+          ${rentalRows}
+        </table>
+        <h2 style="margin:24px 0 12px;font-size:16px;">Return to seller</h2>
+        <table style="width:100%;border-collapse:collapse;font-size:14px;line-height:1.5;">
+          <tr><td style="padding:8px 0;color:#666;">Name</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.sellerName)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Email</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.sellerEmail)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Phone</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.sellerPhone)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">Address</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.address)}</td></tr>
+          <tr><td style="padding:8px 0;color:#666;">City</td><td style="padding:8px 0;font-weight:600;">${escapeHtml(details.city)}</td></tr>
+        </table>
+        <a href="${escapeHtml(buildActionUrl("/profile?section=orders"))}" style="display:inline-block;margin-top:24px;padding:12px 20px;background:#8b6914;color:#fff;text-decoration:none;border-radius:8px;font-weight:600;">View My Orders</a>
+      </div>
+      <p style="margin:0;padding-top:16px;border-top:1px solid #e8e0d8;font-size:12px;color:#888;">
+        This email contains seller return contact details for your Relux Hub rental.
+      </p>
+    </div>
+  `.trim();
+}
+
+function buildReturnInstructionsText(details) {
+  const lines = [
+    `Return instructions — ${details.productTitle}`,
+    "",
+    `Order: ${details.orderPublicId}`,
+    `Item: ${details.productTitle}`,
+    `Size: ${details.size}`,
+  ];
+
+  if (details.rentStart) {
+    lines.push(
+      `Rental: ${details.rentStart} – ${details.rentEnd} (${details.rentalDays} days)`,
+    );
+  }
+
+  lines.push(
+    "",
+    "Return to seller",
+    `Name: ${details.sellerName}`,
+    `Email: ${details.sellerEmail}`,
+    `Phone: ${details.sellerPhone}`,
+    `Address: ${details.address}`,
+    `City: ${details.city}`,
+    "",
+    `Open My Orders: ${buildActionUrl("/profile?section=orders")}`,
+  );
+
+  return lines.join("\n");
+}
+
+async function sendBuyerReturnInstructionsEmail({ to, order, product }) {
+  const details = buildReturnInstructionsDetails(order, product);
+  const subject = `Return instructions — ${details.productTitle} | Relux Hub`;
+
+  return sendEmail({
+    to,
+    subject,
+    html: buildReturnInstructionsHtml(details),
+    text: buildReturnInstructionsText(details),
+  });
+}
+
 async function sendSellerDispatchDetailsEmail({ to, order, product, buyer }) {
   const details = buildDispatchDetails(order, product, buyer);
   const subject = `Dispatch details — ${details.productTitle} | Relux Hub`;
@@ -214,6 +315,8 @@ module.exports = {
   sendEmail,
   sendNotificationEmail,
   sendSellerDispatchDetailsEmail,
+  sendBuyerReturnInstructionsEmail,
   buildDispatchDetails,
+  buildReturnInstructionsDetails,
   buildActionUrl,
 };

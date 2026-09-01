@@ -1,5 +1,6 @@
 const {
   buildDispatchDetails,
+  buildReturnInstructionsDetails,
   buildActionUrl,
   isConfigured,
 } = require("../services/emailService");
@@ -75,6 +76,35 @@ describe("Email / Dispatch Service — Chapter 5: Seller Notifications", () => {
       );
       expect(details.address).toBe("—");
       expect(details.buyerPhone).toBe("—");
+    });
+  });
+
+  describe("buildReturnInstructionsDetails", () => {
+    it("TC-EM-06: includes seller return contact details", () => {
+      const details = buildReturnInstructionsDetails(
+        {
+          _id: "rent1",
+          orderId: "RH-RET001",
+          type: "rental",
+          size: "M",
+          rentStart: "2026-02-01",
+          rentEnd: "2026-02-03",
+          rentalDays: 3,
+          sellerReturnContact: {
+            name: "Seller Ali",
+            email: "ali@example.com",
+            phone: "03001234567",
+            address: "House 5",
+            city: "Karachi",
+          },
+        },
+        { title: "Designer Gown" },
+      );
+
+      expect(details.sellerName).toBe("Seller Ali");
+      expect(details.sellerPhone).toBe("03001234567");
+      expect(details.address).toBe("House 5");
+      expect(details.city).toBe("Karachi");
     });
   });
 

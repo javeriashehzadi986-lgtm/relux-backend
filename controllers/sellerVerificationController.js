@@ -18,7 +18,16 @@ function validateCnicDocuments(cnicFront, cnicBack) {
 
 async function submitVerification(req, res) {
   try {
-    const { phone, city, cnicFront, cnicBack } = req.body;
+    const {
+      phone,
+      city,
+      returnContactName,
+      returnPhone,
+      returnCity,
+      returnAddress,
+      cnicFront,
+      cnicBack,
+    } = req.body;
 
     if (req.user.role === "admin") {
       return res.status(403).json({ message: "Admins cannot submit seller verification" });
@@ -30,6 +39,23 @@ async function submitVerification(req, res) {
 
     if (!phone?.trim() || !city?.trim()) {
       return res.status(400).json({ message: "Phone and city are required" });
+    }
+
+    const resolvedReturnName = (returnContactName || req.user.name || "").trim();
+    const resolvedReturnPhone = (returnPhone || phone || "").trim();
+    const resolvedReturnCity = (returnCity || city || "").trim();
+    const resolvedReturnAddress = (returnAddress || "").trim();
+
+    if (
+      !resolvedReturnName ||
+      !resolvedReturnPhone ||
+      !resolvedReturnCity ||
+      !resolvedReturnAddress
+    ) {
+      return res.status(400).json({
+        message:
+          "Return contact name, phone, city, and address are required so renters can ship items back to you",
+      });
     }
 
     const cnicError = validateCnicDocuments(cnicFront, cnicBack);
@@ -44,6 +70,10 @@ async function submitVerification(req, res) {
 
     user.phone = phone.trim();
     user.city = city.trim();
+    user.returnContactName = resolvedReturnName;
+    user.returnPhone = resolvedReturnPhone;
+    user.returnCity = resolvedReturnCity;
+    user.returnAddress = resolvedReturnAddress;
     user.role = "seller";
     user.status = "pending";
     await user.save();

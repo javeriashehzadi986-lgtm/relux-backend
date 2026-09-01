@@ -318,6 +318,10 @@ describe("Chapter 5 — Functional Testing (FT)", () => {
         body: {
           phone: "03001234567",
           city: "Lahore",
+          returnContactName: "Sara Seller",
+          returnPhone: "03001234567",
+          returnCity: "Lahore",
+          returnAddress: "12 Mall Road",
           cnicFront: "https://example.com/front.jpg",
           cnicBack: "https://example.com/back.jpg",
         },

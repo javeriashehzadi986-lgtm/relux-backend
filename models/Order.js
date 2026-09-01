@@ -132,6 +132,13 @@ const orderSchema = new mongoose.Schema(
       city: { type: String, trim: true, default: "" },
       specialInstructions: { type: String, trim: true, default: "" },
     },
+    sellerReturnContact: {
+      name: { type: String, trim: true, default: "" },
+      phone: { type: String, trim: true, default: "" },
+      email: { type: String, trim: true, default: "" },
+      address: { type: String, trim: true, default: "" },
+      city: { type: String, trim: true, default: "" },
+    },
   },
   { timestamps: true },
 );
@@ -178,6 +185,45 @@ function embeddedProductFields(doc) {
   }
 
   return fields;
+}
+
+function isCompleteReturnContact(contact) {
+  if (!contact) return false;
+  return Boolean(
+    String(contact.name ?? "").trim() &&
+      String(contact.phone ?? "").trim() &&
+      String(contact.city ?? "").trim() &&
+      String(contact.address ?? "").trim(),
+  );
+}
+
+function buildBuyerReturnContact(order) {
+  const contact = order.sellerReturnContact || {};
+  if (!isCompleteReturnContact(contact)) return null;
+  return {
+    name: contact.name.trim(),
+    phone: contact.phone.trim(),
+    email: String(contact.email ?? "").trim(),
+    city: contact.city.trim(),
+    address: contact.address.trim(),
+  };
+}
+
+function shouldExposeSellerReturnContact(order) {
+  const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
+  return (
+    order.type === "rental" &&
+    order.paymentStatus === "paid" &&
+    (fs === FULFILLMENT.DELIVERED || fs === FULFILLMENT.RETURNED)
+  );
+}
+
+function sellerReturnContactFields(order) {
+  const contact = buildBuyerReturnContact(order);
+  return {
+    sellerReturnContact: shouldExposeSellerReturnContact(order) ? contact : null,
+    returnContactReady: Boolean(contact),
+  };
 }
 
 orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
@@ -459,6 +505,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
         isRentalPeriodComplete(this.rentEnd),
       returnAvailableLabel: getReturnAvailableLabel(this.rentEnd),
       ...embeddedProductFields(this),
+      ...sellerReturnContactFields(this),
       createdAt: this.createdAt,
       updatedAt: this.updatedAt,
     };

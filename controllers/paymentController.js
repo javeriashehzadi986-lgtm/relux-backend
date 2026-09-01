@@ -505,6 +505,13 @@ async function markOrderPaidFromSession(session, orderDoc) {
   if (order.type === "rental") {
     order.escrowStatus = "held";
     order.escrowHeldAt = new Date();
+    const seller = await User.findById(order.sellerId).select(
+      "name email phone city returnContactName returnPhone returnCity returnAddress",
+    );
+    if (seller) {
+      const snapshot = seller.getReturnContactSnapshot();
+      order.sellerReturnContact = snapshot;
+    }
   } else if (order.type === "sale") {
     order.escrowStatus = "held";
     order.escrowHeldAt = new Date();

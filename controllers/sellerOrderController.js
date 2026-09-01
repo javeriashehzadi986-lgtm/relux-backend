@@ -1,5 +1,6 @@
 const Order = require("../models/Order");
 const Product = require("../models/Product");
+const User = require("../models/User");
 const {
   notifyBookingConfirmed,
   notifyBookingRejected,
@@ -188,6 +189,18 @@ async function shipOrder(req, res) {
     const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
     if (fs !== FULFILLMENT.PROCESSING) {
       return res.status(400).json({ message: "This order has already been shipped" });
+    }
+
+    if (order.type === "rental") {
+      const seller = await User.findById(req.user._id).select(
+        "name returnContactName returnPhone returnCity returnAddress phone city",
+      );
+      if (!seller?.hasCompleteReturnContact()) {
+        return res.status(400).json({
+          message:
+            "Add your return contact (name, phone, city, address) in Seller Profile before shipping rentals",
+        });
+      }
     }
 
     order.fulfillmentStatus = FULFILLMENT.SHIPPED;
