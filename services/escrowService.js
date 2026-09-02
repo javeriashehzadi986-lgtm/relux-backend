@@ -1,5 +1,4 @@
 const Product = require("../models/Product");
-const Order = require("../models/Order");
 const { getStripe, toStripeUnitAmount } = require("./stripeService");
 const { transferSellerPayout } = require("./stripeConnectService");
 
@@ -449,6 +448,7 @@ async function releaseSaleEscrow(order, overrides = {}, releaseReason = "buyer_c
 }
 
 async function processSaleEscrowAutoReleases() {
+  const Order = require("../models/Order");
   const now = new Date();
   const orders = await Order.find({
     type: "sale",

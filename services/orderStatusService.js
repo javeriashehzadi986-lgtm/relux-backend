@@ -1,4 +1,3 @@
-const Order = require("../models/Order");
 const Product = require("../models/Product");
 
 const FULFILLMENT = {
@@ -61,6 +60,7 @@ function getFulfillmentVariant(order) {
 }
 
 async function syncProductForOrder(order) {
+  const Order = require("../models/Order");
   const product = await Product.findById(order.productId);
   if (!product) return null;
 
