@@ -11,17 +11,20 @@
     "seed": "node seed/seed.js",
     "dev": "node Server.js",
     "test": "jest",
-    "test:report": "jest --coverage --json --outputFile=tests/reports/jest-results.json"
+    "test:report": "jest --coverage --json --outputFile=tests/reports/jest-results.json",
+    "migrate:cloudinary": "node scripts/migrate-images-to-cloudinary.js"
   },
   "dependencies": {
     "@sendgrid/mail": "^8.1.6",
     "bcryptjs": "^3.0.3",
+    "cloudinary": "^2.11.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
     "express": "^5.2.1",
     "google-auth-library": "^11.0.2",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.7.1",
+    "multer": "^2.3.0",
     "socket.io": "^4.8.3",
     "stripe": "^17.7.0"
   },

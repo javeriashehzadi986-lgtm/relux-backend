@@ -11,6 +11,7 @@ function getErrorMessage(error) {
 const publicListingFilter = {
   verificationStatus: "approved",
   status: "active",
+  isAvailable: { $ne: false },
 };
 
 async function listPublicListings(req, res) {
@@ -75,7 +76,7 @@ async function getPublicListing(req, res) {
     const listing = await Product.findOne({
       _id: req.params.id,
       verificationStatus: "approved",
-      status: { $in: ["active", "sold"] },
+      status: { $in: ["active", "sold", "rented"] },
     });
 
     if (!listing) {

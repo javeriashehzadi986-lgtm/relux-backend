@@ -121,6 +121,7 @@ async function approveListing(req, res) {
 
     listing.verificationStatus = "approved";
     listing.status = "active";
+    listing.isAvailable = true;
     listing.reviewedAt = new Date();
     listing.adminNote = "";
     await listing.save();

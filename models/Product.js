@@ -1,4 +1,5 @@
 const mongoose = require("mongoose");
+const { getProductAvailability } = require("../services/productAvailabilityService");
 
 const productSchema = new mongoose.Schema(
   {
@@ -35,6 +36,7 @@ const productSchema = new mongoose.Schema(
       enum: ["pending", "active", "sold", "rented", "removed"],
       default: "pending",
     },
+    isAvailable: { type: Boolean, default: true },
     adminNote: { type: String, default: "" },
     reviewedAt: { type: Date },
     auctionEndNotifiedAt: { type: Date, default: null },
@@ -65,6 +67,8 @@ productSchema.methods.toPublicJSON = function toPublicJSON() {
     gallery: this.gallery,
     verificationStatus: this.verificationStatus,
     status: this.status,
+    isAvailable: this.isAvailable !== false,
+    availability: getProductAvailability(this),
     adminNote: this.adminNote,
     submittedAt: this.createdAt,
     reviewedAt: this.reviewedAt,

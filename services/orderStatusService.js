@@ -75,6 +75,7 @@ async function syncProductForOrder(order) {
       });
       if (!blocking && (product.status === "rented" || product.status === "sold")) {
         product.status = "active";
+        product.isAvailable = true;
         await product.save();
       }
     }
@@ -93,6 +94,7 @@ async function syncProductForOrder(order) {
       });
       if (!activeRental) {
         product.status = "active";
+        product.isAvailable = true;
         await product.save();
       }
     }
@@ -101,6 +103,7 @@ async function syncProductForOrder(order) {
 
   if (order.status === "approved" && order.paymentStatus === "paid") {
     product.status = order.type === "rental" ? "rented" : "sold";
+    product.isAvailable = false;
     await product.save();
   }
 

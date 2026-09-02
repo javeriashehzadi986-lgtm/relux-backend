@@ -76,7 +76,7 @@ async function getPublicListings(req, res) {
     const slug = req.query.category;
     const type = String(req.query.type ?? "").trim().toLowerCase();
     const limit = Math.min(Math.max(Number.parseInt(req.query.limit, 10) || 12, 1), 24);
-    const query = { verificationStatus: "approved", status: "active" };
+    const query = { verificationStatus: "approved", status: "active", isAvailable: { $ne: false } };
 
     if (slug) {
       const main = await resolveMainBySlug(slug);

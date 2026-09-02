@@ -36,6 +36,7 @@ const categoryRoutes = require("./routes/categoryRoutes");
 const paymentRoutes = require("./routes/paymentRoutes");
 const adminPaymentRoutes = require("./routes/adminPaymentRoutes");
 const stripeConnectRoutes = require("./routes/stripeConnectRoutes");
+const uploadRoutes = require("./routes/uploadRoutes");
 const { handleStripeWebhook } = require("./controllers/paymentController");
 
 const app = express();
@@ -116,6 +117,7 @@ app.use("/api/categories", categoryRoutes);
 app.use("/api/payments", paymentRoutes);
 app.use("/api/admin/payments", adminPaymentRoutes);
 app.use("/api/seller/stripe", stripeConnectRoutes);
+app.use("/api/upload", uploadRoutes);
 
 app.use((error, req, res, next) => {
   if (error?.type === "entity.too.large") {

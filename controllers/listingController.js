@@ -1,5 +1,6 @@
 const Product = require("../models/Product");
 const Category = require("../models/Category");
+const Order = require("../models/Order");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -64,6 +65,7 @@ function buildListingPayload(body) {
     itemPrice: body.itemPrice?.trim() || "",
     mainImage: body.mainImage.trim(),
     gallery: Array.isArray(body.gallery) ? body.gallery.filter(Boolean) : [],
+    isAvailable: true,
     verificationStatus: "pending",
     status: "pending",
     adminNote: "",
@@ -100,7 +102,10 @@ async function createListing(req, res) {
 
 async function getMyListings(req, res) {
   try {
-    const listings = await Product.find({ sellerId: req.user._id }).sort({ createdAt: -1 });
+    const listings = await Product.find({
+      sellerId: req.user._id,
+      status: { $ne: "removed" },
+    }).sort({ createdAt: -1 });
     res.json({ listings: listings.map((listing) => listing.toPublicJSON()) });
   } catch (error) {
     res.status(500).json({ message: getErrorMessage(error) });
@@ -109,7 +114,11 @@ async function getMyListings(req, res) {
 
 async function getListing(req, res) {
   try {
-    const product = await Product.findOne({ _id: req.params.id, sellerId: req.user._id });
+    const product = await Product.findOne({
+      _id: req.params.id,
+      sellerId: req.user._id,
+      status: { $ne: "removed" },
+    });
     if (!product) {
       return res.status(404).json({ message: "Listing not found" });
     }
@@ -122,9 +131,18 @@ async function getListing(req, res) {
 
 async function updateListing(req, res) {
   try {
-    const product = await Product.findOne({ _id: req.params.id, sellerId: req.user._id });
+    const product = await Product.findOne({
+      _id: req.params.id,
+      sellerId: req.user._id,
+      status: { $ne: "removed" },
+    });
     if (!product) {
       return res.status(404).json({ message: "Listing not found" });
+    }
+    if (product.status === "sold" || product.status === "rented") {
+      return res.status(400).json({
+        message: "Sold or rented listings cannot be edited",
+      });
     }
 
     const validationError = await validateListingBody(req.body);
@@ -144,4 +162,83 @@ async function updateListing(req, res) {
   }
 }
 
-module.exports = { createListing, getMyListings, getListing, updateListing };
+async function deleteListing(req, res) {
+  try {
+    const product = await Product.findOne({
+      _id: req.params.id,
+      sellerId: req.user._id,
+      status: { $ne: "removed" },
+    });
+    if (!product) {
+      return res.status(404).json({ message: "Listing not found" });
+    }
+    if (product.status === "sold" || product.status === "rented") {
+      return res.status(400).json({
+        message: "Sold or rented listings cannot be deleted",
+      });
+    }
+
+    const activeOrder = await Order.findOne({
+      productId: product._id,
+      status: { $in: ["pending", "approved"] },
+      removedByBuyer: false,
+    }).select("_id");
+
+    if (activeOrder) {
+      return res.status(400).json({
+        message: "This listing has an active order and cannot be deleted yet",
+      });
+    }
+
+    product.status = "removed";
+    product.isAvailable = false;
+    await product.save();
+
+    res.json({ message: "Listing deleted" });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
+async function updateListingAvailability(req, res) {
+  try {
+    const product = await Product.findOne({
+      _id: req.params.id,
+      sellerId: req.user._id,
+      status: { $ne: "removed" },
+    });
+
+    if (!product) {
+      return res.status(404).json({ message: "Listing not found" });
+    }
+
+    if (product.status === "sold" || product.status === "rented") {
+      return res.status(400).json({
+        message: "Sold or rented listings cannot be marked available or unavailable manually",
+      });
+    }
+
+    if (product.verificationStatus !== "approved" || product.status !== "active") {
+      return res.status(400).json({
+        message: "Only approved active listings can change availability",
+      });
+    }
+
+    const { isAvailable } = req.body;
+    if (typeof isAvailable !== "boolean") {
+      return res.status(400).json({ message: "isAvailable must be true or false" });
+    }
+
+    product.isAvailable = isAvailable;
+    await product.save();
+
+    res.json({
+      message: isAvailable ? "Listing is now available" : "Listing marked unavailable",
+      listing: product.toPublicJSON(),
+    });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
+module.exports = { createListing, getMyListings, getListing, updateListing, deleteListing, updateListingAvailability };
