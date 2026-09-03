@@ -16,7 +16,7 @@ const {
   getFrontendUrl,
 } = require("../services/stripeService");
 
-const DEFAULT_DELIVERY_PKR = 1500;
+const DEFAULT_DELIVERY_PKR = 0;
 
 function getErrorMessage(error) {
   if (error?.type === "StripeInvalidRequestError") {
@@ -249,8 +249,6 @@ async function createSaleCheckout(req, res) {
     const stripe = getStripe();
     const currency = getCurrency();
     const bidUnitAmount = toStripeUnitAmount(winningBid);
-    const deliveryUnitAmount = toStripeUnitAmount(deliveryCharges);
-    const unitAmount = bidUnitAmount + deliveryUnitAmount;
     const frontend = getFrontendUrl();
 
     const imageUrl =
@@ -260,34 +258,39 @@ async function createSaleCheckout(req, res) {
         ? product.mainImage
         : undefined;
 
+    const lineItems = [
+      {
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: bidUnitAmount,
+          product_data: {
+            name: `Winning bid — ${product.title || "Relux Hub item"}`,
+            description: `Your winning auction bid: PKR ${winningBid.toLocaleString("en-PK")}`,
+            images: imageUrl ? [imageUrl] : undefined,
+          },
+        },
+      },
+    ];
+
+    if (deliveryCharges > 0) {
+      lineItems.push({
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: toStripeUnitAmount(deliveryCharges),
+          product_data: {
+            name: "Delivery charges",
+            description: `Shipping within Pakistan: PKR ${deliveryCharges.toLocaleString("en-PK")}`,
+          },
+        },
+      });
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: shipping.email || req.user.email || undefined,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency,
-            unit_amount: bidUnitAmount,
-            product_data: {
-              name: `Winning bid — ${product.title || "Relux Hub item"}`,
-              description: `Your winning auction bid: PKR ${winningBid.toLocaleString("en-PK")}`,
-              images: imageUrl ? [imageUrl] : undefined,
-            },
-          },
-        },
-        {
-          quantity: 1,
-          price_data: {
-            currency,
-            unit_amount: deliveryUnitAmount,
-            product_data: {
-              name: "Delivery charges",
-              description: `Shipping within Pakistan: PKR ${deliveryCharges.toLocaleString("en-PK")}`,
-            },
-          },
-        },
-      ],
+      line_items: lineItems,
       metadata: {
         orderId: order._id.toString(),
         orderPublicId: order.orderId,
@@ -303,7 +306,7 @@ async function createSaleCheckout(req, res) {
 
     order.stripeSessionId = session.id;
     order.currency = currency;
-    order.stripeAmount = unitAmount;
+    order.stripeAmount = bidUnitAmount + (deliveryCharges > 0 ? toStripeUnitAmount(deliveryCharges) : 0);
     await order.save();
 
     res.status(201).json({
@@ -515,7 +518,7 @@ async function markOrderPaidFromSession(session, orderDoc) {
   } else if (order.type === "sale") {
     order.escrowStatus = "held";
     order.escrowHeldAt = new Date();
-    order.sellerPayoutPkr = order.itemAmountPkr || order.amountPkr || 0;
+    order.sellerPayoutPkr = order.amountPkr || order.itemAmountPkr || 0;
   }
   await order.save();
   await syncProductForOrder(order);

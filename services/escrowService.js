@@ -49,10 +49,8 @@ function calculateRentalEscrow(order, product, overrides = {}) {
 
 function calculateSaleEscrow(order, overrides = {}) {
   const totalPaid = Math.max(0, Math.round(Number(order.amountPkr) || 0));
-  const defaultSellerPayout = Math.max(
-    0,
-    Math.round(Number(order.itemAmountPkr) || totalPaid),
-  );
+  // Successful sale: seller gets bid + delivery. Refunds only when admin/dispute overrides.
+  const defaultSellerPayout = totalPaid;
 
   const sellerPayoutPkr =
     overrides.sellerPayoutPkr !== undefined

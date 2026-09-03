@@ -45,9 +45,9 @@ function buildSaleOrder(overrides = {}) {
     paymentStatus: "paid",
     escrowStatus: "held",
     escrowSettlementStatus: "none",
-    amountPkr: 13500,
+    amountPkr: 12000,
     itemAmountPkr: 12000,
-    deliveryChargesPkr: 1500,
+    deliveryChargesPkr: 0,
     fulfillmentStatus: "processing",
     save: jest.fn().mockResolvedValue(undefined),
     toBuyerJSON: jest.fn().mockReturnValue({ id: String(id), escrowStatus: "released" }),
@@ -147,11 +147,11 @@ describe("Sale Escrow Flow — hold, confirm, dispute, auto-release", () => {
       save: jest.fn(),
     });
 
-    const released = { ...order, escrowStatus: "released", refundAmountPkr: 13500 };
+    const released = { ...order, escrowStatus: "released", refundAmountPkr: 12000 };
     releaseSaleEscrow.mockResolvedValue({
       order: released,
       sellerPayoutPkr: 0,
-      refundAmountPkr: 13500,
+      refundAmountPkr: 12000,
     });
 
     const req = mockReq({
@@ -159,7 +159,7 @@ describe("Sale Escrow Flow — hold, confirm, dispute, auto-release", () => {
       params: { id: String(order._id) },
       body: {
         sellerPayoutPkr: 0,
-        refundAmountPkr: 13500,
+        refundAmountPkr: 12000,
         decision: "Full refund — item not delivered",
       },
     });
@@ -170,7 +170,7 @@ describe("Sale Escrow Flow — hold, confirm, dispute, auto-release", () => {
     expect(res.statusCode).toBe(200);
     expect(releaseSaleEscrow).toHaveBeenCalledWith(
       order,
-      expect.objectContaining({ sellerPayoutPkr: 0, refundAmountPkr: 13500 }),
+      expect.objectContaining({ sellerPayoutPkr: 0, refundAmountPkr: 12000 }),
       "admin_settled",
     );
   });
@@ -178,10 +178,18 @@ describe("Sale Escrow Flow — hold, confirm, dispute, auto-release", () => {
   it("SE-05: calculateSaleEscrow splits seller payout and refund", () => {
     const { calculateSaleEscrow } = require("../services/escrowService");
     const order = buildSaleOrder();
-    const breakdown = calculateSaleEscrow(order, { sellerPayoutPkr: 8000, refundAmountPkr: 5500 });
+    const breakdown = calculateSaleEscrow(order, { sellerPayoutPkr: 8000, refundAmountPkr: 4000 });
     expect(breakdown.sellerPayoutPkr).toBe(8000);
-    expect(breakdown.refundAmountPkr).toBe(5500);
+    expect(breakdown.refundAmountPkr).toBe(4000);
     expect(breakdown.exceedsTotal).toBe(false);
+  });
+
+  it("SE-05b: default sale release pays seller full bid amount, no refund", () => {
+    const { calculateSaleEscrow } = require("../services/escrowService");
+    const order = buildSaleOrder();
+    const breakdown = calculateSaleEscrow(order);
+    expect(breakdown.sellerPayoutPkr).toBe(12000);
+    expect(breakdown.refundAmountPkr).toBe(0);
   });
 
   it("SE-06: auto-release window is 48 hours", () => {
