@@ -23,11 +23,27 @@ async function syncConnectFlags(verification) {
   };
 }
 
+function resolveConnectReturnUrls(frontend, returnTo) {
+  const dest = String(returnTo || "profile").toLowerCase();
+  if (dest === "pending" || dest === "verification") {
+    return {
+      refresh_url: `${frontend}/seller-pending?stripe=refresh`,
+      return_url: `${frontend}/seller-pending?stripe=return`,
+    };
+  }
+  return {
+    refresh_url: `${frontend}/sellerProfile?section=profile&stripe=refresh`,
+    return_url: `${frontend}/sellerProfile?section=profile&stripe=return`,
+  };
+}
+
 /** Seller: start or resume Stripe Connect Express onboarding */
 async function createConnectOnboardingLink(req, res) {
   try {
     if (req.user.role !== "seller") {
-      return res.status(403).json({ message: "Only sellers can connect Stripe" });
+      return res.status(403).json({
+        message: "Submit your seller verification (CNIC and details) first, then connect Stripe",
+      });
     }
 
     const verification = await SellerVerification.findOne({ userId: req.user._id });
@@ -40,6 +56,8 @@ async function createConnectOnboardingLink(req, res) {
     const stripe = getStripe();
     const frontend = getFrontendUrl();
     const country = String(process.env.STRIPE_CONNECT_COUNTRY || "US").toUpperCase();
+    const returnTo = req.body?.returnTo || req.query?.returnTo || "profile";
+    const { refresh_url, return_url } = resolveConnectReturnUrls(frontend, returnTo);
 
     if (!verification.stripeAccountId) {
       const account = await stripe.accounts.create({
@@ -62,8 +80,8 @@ async function createConnectOnboardingLink(req, res) {
 
     const accountLink = await stripe.accountLinks.create({
       account: verification.stripeAccountId,
-      refresh_url: `${frontend}/sellerProfile?section=profile&stripe=refresh`,
-      return_url: `${frontend}/sellerProfile?section=profile&stripe=return`,
+      refresh_url,
+      return_url,
       type: "account_onboarding",
     });
 

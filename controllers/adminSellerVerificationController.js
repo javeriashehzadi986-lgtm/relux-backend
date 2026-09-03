@@ -5,6 +5,7 @@ const {
   notifySellerRejected,
   notifySellerMoreInfoRequested,
 } = require("../services/notificationService");
+const { syncSellerConnectAccount } = require("../services/stripeConnectService");
 
 function mapApplication(verification) {
   const user = verification.userId;
@@ -23,7 +24,9 @@ function mapApplication(verification) {
     avatar: null,
     cnicFront: verification.cnicFront,
     cnicBack: verification.cnicBack,
-    bankName: "Not provided",
+    stripeConnected: Boolean(verification.stripeConnected),
+    stripeAccountId: verification.stripeAccountId || "",
+    bankName: verification.stripeConnected ? "Stripe Connect" : "Not connected",
     accountTitle: user.name,
     notes: verification.adminNote?.trim() || "Seller verification request",
   };
@@ -71,6 +74,22 @@ async function approveApplication(req, res) {
 
     if (verification.verificationStatus !== "pending") {
       return res.status(400).json({ message: "Only pending applications can be approved" });
+    }
+
+    const { verification: synced, account } = await syncSellerConnectAccount(verification.userId);
+    const readyForApproval =
+      Boolean(synced?.stripeConnected) || Boolean(account?.details_submitted);
+
+    if (!readyForApproval) {
+      return res.status(400).json({
+        message:
+          "This seller has not finished Stripe Connect. Ask them to complete Stripe setup before approval.",
+      });
+    }
+
+    if (synced) {
+      verification.stripeConnected = Boolean(synced.stripeConnected);
+      verification.stripeAccountId = synced.stripeAccountId || verification.stripeAccountId;
     }
 
     const user = await User.findById(verification.userId);
