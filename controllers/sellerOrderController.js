@@ -5,6 +5,7 @@ const {
   notifyBookingConfirmed,
   notifyBookingRejected,
   notifyRentalCompleted,
+  notifyBuyerOrderShipped,
 } = require("../services/notificationService");
 const {
   FULFILLMENT,
@@ -27,7 +28,7 @@ async function getMySellerOrders(req, res) {
       status: { $nin: ["cancelled"] },
     })
       .populate("buyerId", "name email")
-      .populate("productId", "title mainImage gallery brand listingType")
+      .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
       .sort({ createdAt: -1 });
 
     // Rejected can stay briefly or be hidden — hide rejected from active seller inbox
@@ -193,13 +194,17 @@ async function shipOrder(req, res) {
 
     if (order.type === "rental") {
       const seller = await User.findById(req.user._id).select(
-        "name returnContactName returnPhone returnCity returnAddress phone city",
+        "name email phone city returnContactName returnPhone returnCity returnAddress",
       );
       if (!seller?.hasCompleteReturnContact()) {
         return res.status(400).json({
           message:
             "Add your return contact (name, phone, city, address) in Seller Profile before shipping rentals",
         });
+      }
+      const snapshot = seller.getReturnContactSnapshot?.();
+      if (snapshot) {
+        order.sellerReturnContact = snapshot;
       }
     }
 
@@ -210,7 +215,23 @@ async function shipOrder(req, res) {
     }
     await order.save();
 
-    res.json({ message: "Order marked as shipped", order: order.toSellerJSON() });
+    const product = await Product.findById(order.productId).select("title");
+    notifyBuyerOrderShipped({
+      buyerId: order.buyerId,
+      productTitle: product?.title ?? "your order",
+      orderId: order._id,
+      orderType: order.type,
+    });
+
+    const fresh = await Order.findById(order._id)
+      .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
+      .populate("buyerId", "name")
+      .populate("sellerId", "name");
+
+    res.json({
+      message: "Order marked as shipped",
+      order: fresh ? fresh.toSellerJSON() : order.toSellerJSON(),
+    });
   } catch (error) {
     res.status(400).json({ message: error.message || getErrorMessage(error) });
   }

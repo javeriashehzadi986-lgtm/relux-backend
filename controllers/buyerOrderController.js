@@ -118,7 +118,7 @@ async function getMyBuyerOrders(req, res) {
       buyerId: req.user._id,
       removedByBuyer: false,
     })
-      .populate("productId", "title mainImage gallery brand listingType")
+      .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
       .populate("sellerId", "name")
       .sort({ createdAt: -1 });
 
@@ -137,7 +137,7 @@ async function getMyBuyerOrder(req, res) {
       buyerId: req.user._id,
       removedByBuyer: false,
     })
-      .populate("productId", "title mainImage gallery brand listingType")
+      .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
       .populate("sellerId", "name");
 
     if (!order) {
@@ -290,7 +290,7 @@ async function confirmReceivedOrder(req, res) {
     });
 
     const fresh = await Order.findById(order._id)
-      .populate("productId", "title mainImage gallery brand listingType")
+      .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
       .populate("sellerId", "name");
 
     res.json({
@@ -333,6 +333,7 @@ async function markReturnedOrder(req, res) {
     }
 
     order.fulfillmentStatus = FULFILLMENT.RETURNED;
+    order.returnConfirmedAt = new Date();
     await order.save();
 
     const product = await Product.findById(order.productId).select("title");
@@ -343,7 +344,7 @@ async function markReturnedOrder(req, res) {
     });
 
     const fresh = await Order.findById(order._id)
-      .populate("productId", "title mainImage gallery brand listingType")
+      .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
       .populate("sellerId", "name");
 
     res.json({

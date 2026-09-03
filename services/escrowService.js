@@ -1,6 +1,7 @@
 const Product = require("../models/Product");
 const { getStripe, toStripeUnitAmount } = require("./stripeService");
 const { transferSellerPayout } = require("./stripeConnectService");
+const { finalizeOrderAfterEscrowRelease } = require("./orderStatusService");
 
 const SALE_AUTO_RELEASE_MS = 48 * 60 * 60 * 1000;
 
@@ -211,6 +212,7 @@ function buildSettlementSummary(order, product, overrides = {}) {
     settlementAcceptedAt: order.settlementAcceptedAt || null,
     settlementDisputedAt: order.settlementDisputedAt || null,
     adminSettlementNote: order.adminSettlementNote || "",
+    escrowStatus: order.escrowStatus || "none",
   };
 }
 
@@ -345,6 +347,7 @@ async function releaseRentalEscrow(order, overrides = {}) {
     order.escrowReleasedAt = new Date();
     order.escrowSettlementStatus = order.escrowSettlementStatus || "accepted";
     await order.save();
+    await finalizeOrderAfterEscrowRelease(order);
   } catch (error) {
     order.escrowStatus = "failed";
     order.sellerPayoutStatus = "failed";
@@ -429,6 +432,7 @@ async function releaseSaleEscrow(order, overrides = {}, releaseReason = "buyer_c
       if (!order.refundedAt) order.refundedAt = new Date();
     }
     await order.save();
+    await finalizeOrderAfterEscrowRelease(order);
   } catch (error) {
     order.escrowStatus = "failed";
     order.sellerPayoutStatus = "failed";

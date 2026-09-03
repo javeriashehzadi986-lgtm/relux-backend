@@ -330,6 +330,18 @@ async function adminResolveSettlement(req, res) {
 
     assertEscrowHeld(order);
 
+    if (order.disputeReportId) {
+      const report = await Report.findById(order.disputeReportId);
+      if (report && !Report.isMediationComplete(report)) {
+        return res.status(400).json({
+          message:
+            "Contact both buyer and seller and wait for their responses before releasing escrow.",
+          disputeStage: report.disputeStage,
+          mediationComplete: false,
+        });
+      }
+    }
+
     const {
       rentalChargePkr,
       damageDeductionPkr,

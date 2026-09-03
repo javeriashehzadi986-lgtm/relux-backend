@@ -2,7 +2,7 @@ const Report = require("../models/Report");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const User = require("../models/User");
-const { notifyReportResolved } = require("../services/notificationService");
+const { notifyReportResolved, notifyDisputeMediationRequested, notifyDisputePartyResponded } = require("../services/notificationService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -170,20 +170,88 @@ async function submitSellerResponse(req, res) {
       return res.status(400).json({ message: "This dispute is already resolved" });
     }
 
-    if (report.disputeStage !== "awaiting_seller") {
+    if (!report.adminMessageToSeller?.trim()) {
       return res.status(400).json({
         message: "Admin has not requested your response yet",
       });
     }
 
+    if (report.sellerResponse?.trim()) {
+      return res.status(400).json({ message: "You have already submitted a response" });
+    }
+
     report.sellerResponse = response.trim();
     report.sellerRespondedAt = new Date();
-    report.disputeStage = "seller_responded";
     report.status = "in_progress";
+    Report.syncDisputeStage(report);
     await report.save();
+
+    notifyDisputePartyResponded({
+      reportId: report.reportId,
+      subject: report.subject,
+      responderRole: "seller",
+      orderId: report.orderId,
+    }).catch(() => {});
 
     res.json({
       report: report.toReporterJSON(req.user._id, "seller"),
+      message: "Your response was sent to admin",
+    });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
+/** Buyer: respond to a dispute admin asked about */
+async function submitBuyerResponse(req, res) {
+  try {
+    if (req.user.role !== "buyer") {
+      return res.status(403).json({ message: "Only buyers can respond to buyer mediation requests" });
+    }
+
+    const { response } = req.body;
+    if (!response?.trim()) {
+      return res.status(400).json({ message: "Response is required" });
+    }
+
+    const report = await Report.findById(req.params.id);
+    if (!report) {
+      return res.status(404).json({ message: "Report not found" });
+    }
+
+    if (String(report.involvedBuyerId) !== String(req.user._id)) {
+      return res.status(403).json({ message: "This dispute is not assigned to you" });
+    }
+
+    if (report.status === "resolved" || report.disputeStage === "resolved") {
+      return res.status(400).json({ message: "This dispute is already resolved" });
+    }
+
+    if (!report.adminMessageToBuyer?.trim()) {
+      return res.status(400).json({
+        message: "Admin has not requested your response yet",
+      });
+    }
+
+    if (report.buyerResponse?.trim()) {
+      return res.status(400).json({ message: "You have already submitted a response" });
+    }
+
+    report.buyerResponse = response.trim();
+    report.buyerRespondedAt = new Date();
+    report.status = "in_progress";
+    Report.syncDisputeStage(report);
+    await report.save();
+
+    notifyDisputePartyResponded({
+      reportId: report.reportId,
+      subject: report.subject,
+      responderRole: "buyer",
+      orderId: report.orderId,
+    }).catch(() => {});
+
+    res.json({
+      report: report.toReporterJSON(req.user._id, "buyer"),
       message: "Your response was sent to admin",
     });
   } catch (error) {
@@ -222,7 +290,10 @@ async function updateAdminReport(req, res) {
       adminReply,
       adminNote,
       askSeller,
+      askBuyer,
+      askBoth,
       messageToSeller,
+      messageToBuyer,
       decision,
     } = req.body;
 
@@ -233,6 +304,60 @@ async function updateAdminReport(req, res) {
     }
 
     const wasResolved = report.status === "resolved";
+
+    const defaultSellerMessage =
+      "Please respond to this buyer complaint with your side of the story.";
+    const defaultBuyerMessage =
+      "Please provide any additional details about this dispute so we can resolve it fairly.";
+
+    // Ask both buyer and seller to respond (required before escrow release)
+    if (askBoth) {
+      if (!report.involvedSellerId || !report.involvedBuyerId) {
+        return res.status(400).json({
+          message:
+            "Both buyer and seller must be linked to this dispute (submit with an order selected).",
+        });
+      }
+
+      const sellerNote =
+        (typeof messageToSeller === "string" && messageToSeller.trim()) ||
+        (typeof adminReply === "string" && adminReply.trim()) ||
+        defaultSellerMessage;
+      const buyerNote =
+        (typeof messageToBuyer === "string" && messageToBuyer.trim()) ||
+        (typeof adminReply === "string" && adminReply.trim()) ||
+        defaultBuyerMessage;
+
+      report.adminMessageToSeller = sellerNote;
+      report.adminMessageToBuyer = buyerNote;
+      report.status = "in_progress";
+      report.adminReply =
+        "We have contacted the buyer and seller and are waiting for their responses.";
+      report.reviewedAt = new Date();
+      report.reviewedBy = req.user._id;
+      Report.syncDisputeStage(report);
+      await report.save();
+
+      notifyDisputeMediationRequested({
+        userId: report.involvedSellerId?._id ?? report.involvedSellerId,
+        role: "seller",
+        reportId: report.reportId,
+        subject: report.subject,
+        message: sellerNote,
+      }).catch(() => {});
+      notifyDisputeMediationRequested({
+        userId: report.involvedBuyerId?._id ?? report.involvedBuyerId,
+        role: "buyer",
+        reportId: report.reportId,
+        subject: report.subject,
+        message: buyerNote,
+      }).catch(() => {});
+
+      return res.json({
+        report: report.toAdminJSON(),
+        message: "Buyer and seller have been asked to respond",
+      });
+    }
 
     // Ask the involved seller to respond (dispute mediation)
     if (askSeller) {
@@ -246,21 +371,67 @@ async function updateAdminReport(req, res) {
       const note =
         (typeof messageToSeller === "string" && messageToSeller.trim()) ||
         (typeof adminReply === "string" && adminReply.trim()) ||
-        "Please respond to this buyer complaint with your side of the story.";
+        defaultSellerMessage;
 
       report.adminMessageToSeller = note;
-      report.disputeStage = "awaiting_seller";
       report.status = "in_progress";
       report.adminReply =
         (typeof adminReply === "string" && adminReply.trim()) ||
         "We have contacted the seller and are waiting for their response.";
       report.reviewedAt = new Date();
       report.reviewedBy = req.user._id;
+      Report.syncDisputeStage(report);
       await report.save();
+
+      notifyDisputeMediationRequested({
+        userId: report.involvedSellerId?._id ?? report.involvedSellerId,
+        role: "seller",
+        reportId: report.reportId,
+        subject: report.subject,
+        message: note,
+      }).catch(() => {});
 
       return res.json({
         report: report.toAdminJSON(),
         message: "Seller has been asked to respond",
+      });
+    }
+
+    // Ask the involved buyer to respond
+    if (askBuyer) {
+      if (!report.involvedBuyerId) {
+        return res.status(400).json({
+          message:
+            "No buyer is linked to this request. Buyer must submit with an order selected.",
+        });
+      }
+
+      const note =
+        (typeof messageToBuyer === "string" && messageToBuyer.trim()) ||
+        (typeof adminReply === "string" && adminReply.trim()) ||
+        defaultBuyerMessage;
+
+      report.adminMessageToBuyer = note;
+      report.status = "in_progress";
+      report.adminReply =
+        (typeof adminReply === "string" && adminReply.trim()) ||
+        "We have contacted the buyer and are waiting for their response.";
+      report.reviewedAt = new Date();
+      report.reviewedBy = req.user._id;
+      Report.syncDisputeStage(report);
+      await report.save();
+
+      notifyDisputeMediationRequested({
+        userId: report.involvedBuyerId?._id ?? report.involvedBuyerId,
+        role: "buyer",
+        reportId: report.reportId,
+        subject: report.subject,
+        message: note,
+      }).catch(() => {});
+
+      return res.json({
+        report: report.toAdminJSON(),
+        message: "Buyer has been asked to respond",
       });
     }
 
@@ -289,6 +460,11 @@ async function updateAdminReport(req, res) {
     if (typeof messageToSeller === "string") {
       report.adminMessageToSeller = messageToSeller.trim();
     }
+    if (typeof messageToBuyer === "string") {
+      report.adminMessageToBuyer = messageToBuyer.trim();
+    }
+
+    Report.syncDisputeStage(report);
 
     if (report.status === "resolved") {
       report.disputeStage = "resolved";
@@ -322,6 +498,7 @@ module.exports = {
   createReport,
   getMyReports,
   submitSellerResponse,
+  submitBuyerResponse,
   getAdminReports,
   updateAdminReport,
 };

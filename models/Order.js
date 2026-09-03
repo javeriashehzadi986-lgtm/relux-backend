@@ -1,6 +1,7 @@
 const mongoose = require("mongoose");
-const { getFulfillmentLabel, FULFILLMENT, getFulfillmentVariant, isRentalPeriodComplete, getReturnAvailableLabel } = require("../services/orderStatusService");
+const { getFulfillmentLabel, FULFILLMENT, getFulfillmentVariant, isRentalPeriodComplete, getReturnAvailableLabel, buildOrderLogistics, getPaymentLabel } = require("../services/orderStatusService");
 const { getEscrowLabel } = require("../services/escrowService");
+const { getProductAvailability } = require("../services/productAvailabilityService");
 
 function generateOrderId() {
   const stamp = Date.now().toString(36).toUpperCase();
@@ -179,6 +180,8 @@ function embeddedProductFields(doc) {
     fields.productTitle = product.title || "";
     fields.productImage = product.mainImage || product.gallery?.[0] || "";
     fields.productBrand = product.brand || "";
+    fields.productStatus = product.status || "";
+    fields.productAvailabilityLabel = getProductAvailability(product).label;
   }
   if (seller && typeof seller === "object" && seller.name) {
     fields.sellerName = seller.name;
@@ -226,6 +229,60 @@ function sellerReturnContactFields(order) {
   };
 }
 
+function formatShippedBuyerMeta(order, fulfillmentLabel) {
+  if (!order.shippedAt) {
+    return `${fulfillmentLabel} — confirm when you receive it`;
+  }
+  const shippedDate = new Date(order.shippedAt).toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+  return `Shipped on ${shippedDate} — confirm when you receive it`;
+}
+
+function buildRentalBuyerMeta(order, fs, rentalNeedsPay, fulfillmentLabel) {
+  if (rentalNeedsPay) {
+    return [
+      { icon: "calendar-check", text: `${order.rentalDays || 1} Days Rental` },
+      { icon: "clock", text: "Seller approved — pay security deposit" },
+    ];
+  }
+
+  if (fs === FULFILLMENT.SHIPPED) {
+    return [
+      { icon: "calendar-check", text: `${order.rentalDays || 1} Days Rental` },
+      {
+        icon: "clock",
+        text: formatShippedBuyerMeta(order, fulfillmentLabel),
+        highlight: true,
+      },
+    ];
+  }
+
+  if (fs === FULFILLMENT.DELIVERED) {
+    return [
+      { icon: "calendar-check", text: `${order.rentalDays || 1} Days Rental` },
+      {
+        icon: "check-circle",
+        text: isRentalPeriodComplete(order.rentEnd)
+          ? "Rental period ended — you can mark the item as returned"
+          : getReturnAvailableLabel(order.rentEnd),
+        highlight: isRentalPeriodComplete(order.rentEnd),
+      },
+    ];
+  }
+
+  return [
+    { icon: "calendar-check", text: `${order.rentalDays || 1} Days Rental` },
+    {
+      icon: "check-circle",
+      text: formatRentalPeriod(order.rentStart, order.rentEnd) || fulfillmentLabel,
+      highlight: true,
+    },
+  ];
+}
+
 orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   const id = this._id.toString();
   const dressId =
@@ -233,6 +290,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
 
   const payment = {
     paymentStatus: this.paymentStatus || "unpaid",
+    paymentLabel: getPaymentLabel(this),
     amountPkr: this.amountPkr || 0,
     paidAt: this.paidAt,
     fulfillmentStatus: this.fulfillmentStatus || FULFILLMENT.PROCESSING,
@@ -251,8 +309,10 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
     disputeReportId: this.disputeReportId?.toString?.() || "",
     shippedAt: this.shippedAt || null,
     deliveryConfirmedAt: this.deliveryConfirmedAt || null,
+    returnConfirmedAt: this.returnConfirmedAt || null,
     saleEscrowAutoReleaseAt: this.saleEscrowAutoReleaseAt || null,
     saleEscrowReleaseReason: this.saleEscrowReleaseReason || "",
+    logistics: buildOrderLogistics(this),
   };
 
   if (this.status === "cancelled" || this.status === "rejected") {
@@ -440,26 +500,12 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       }
     }
 
-    const rentalMeta =
-      !isSale && !rentalNeedsPay && fs === FULFILLMENT.DELIVERED
-        ? [
-            { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
-            {
-              icon: "check-circle",
-              text: isRentalPeriodComplete(this.rentEnd)
-                ? "Rental period ended — you can mark the item as returned"
-                : getReturnAvailableLabel(this.rentEnd),
-              highlight: isRentalPeriodComplete(this.rentEnd),
-            },
-          ]
-        : [
-            { icon: "calendar-check", text: `${this.rentalDays || 1} Days Rental` },
-            {
-              icon: "check-circle",
-              text: formatRentalPeriod(this.rentStart, this.rentEnd) || fulfillmentLabel,
-              highlight: true,
-            },
-          ];
+    const rentalMeta = buildRentalBuyerMeta(
+      this,
+      fs,
+      rentalNeedsPay,
+      fulfillmentLabel,
+    );
 
     return {
       id,
@@ -473,9 +519,9 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       rentalDays: this.rentalDays,
       rentStart: this.rentStart,
       rentEnd: this.rentEnd,
+      ...payment,
       status: buyerStatus,
       statusLabel: fulfillmentLabel,
-      ...payment,
       meta: isSale
         ? [
             {
@@ -575,6 +621,7 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
     rentEnd: this.rentEnd,
     dateLabel: formatDateLabel(this.rentStart, this.rentEnd),
     paymentStatus: this.paymentStatus || "unpaid",
+    paymentLabel: getPaymentLabel(this),
     fulfillmentStatus: this.fulfillmentStatus || FULFILLMENT.PROCESSING,
     fulfillmentLabel: getFulfillmentLabel(this),
     escrowStatus: this.escrowStatus || "none",
@@ -591,9 +638,11 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
     disputeReportId: this.disputeReportId?.toString?.() || "",
     shippedAt: this.shippedAt || null,
     deliveryConfirmedAt: this.deliveryConfirmedAt || null,
+    returnConfirmedAt: this.returnConfirmedAt || null,
     saleEscrowAutoReleaseAt: this.saleEscrowAutoReleaseAt || null,
     saleEscrowReleaseReason: this.saleEscrowReleaseReason || "",
     amountPkr: this.amountPkr || 0,
+    logistics: buildOrderLogistics(this),
     ...embeddedProductFields(this),
     createdAt: this.createdAt,
     updatedAt: this.updatedAt,

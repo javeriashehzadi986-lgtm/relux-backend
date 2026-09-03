@@ -81,7 +81,16 @@ const reportSchema = new mongoose.Schema(
     },
     disputeStage: {
       type: String,
-      enum: ["none", "awaiting_seller", "seller_responded", "resolved"],
+      enum: [
+        "none",
+        "awaiting_seller",
+        "awaiting_buyer",
+        "awaiting_both",
+        "seller_responded",
+        "buyer_responded",
+        "both_responded",
+        "resolved",
+      ],
       default: "none",
       index: true,
     },
@@ -95,12 +104,23 @@ const reportSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    adminMessageToBuyer: {
+      type: String,
+      trim: true,
+      default: "",
+    },
     sellerResponse: {
       type: String,
       trim: true,
       default: "",
     },
     sellerRespondedAt: { type: Date },
+    buyerResponse: {
+      type: String,
+      trim: true,
+      default: "",
+    },
+    buyerRespondedAt: { type: Date },
     decision: {
       type: String,
       trim: true,
@@ -145,6 +165,41 @@ function idString(value) {
   return value?._id?.toString?.() ?? value?.toString?.() ?? value ?? null;
 }
 
+function syncDisputeStage(report) {
+  if (report.status === "resolved") {
+    report.disputeStage = "resolved";
+    return;
+  }
+
+  const askedSeller = Boolean(report.adminMessageToSeller?.trim());
+  const askedBuyer = Boolean(report.adminMessageToBuyer?.trim());
+  const sellerDone = Boolean(report.sellerResponse?.trim());
+  const buyerDone = Boolean(report.buyerResponse?.trim());
+
+  if (askedSeller && askedBuyer) {
+    if (sellerDone && buyerDone) report.disputeStage = "both_responded";
+    else if (sellerDone) report.disputeStage = "awaiting_buyer";
+    else if (buyerDone) report.disputeStage = "awaiting_seller";
+    else report.disputeStage = "awaiting_both";
+  } else if (askedSeller) {
+    report.disputeStage = sellerDone ? "seller_responded" : "awaiting_seller";
+  } else if (askedBuyer) {
+    report.disputeStage = buyerDone ? "buyer_responded" : "awaiting_buyer";
+  } else {
+    report.disputeStage = "none";
+  }
+}
+
+function isMediationComplete(report) {
+  if (!report?.orderId) return true;
+  const askedSeller = Boolean(report.adminMessageToSeller?.trim());
+  const askedBuyer = Boolean(report.adminMessageToBuyer?.trim());
+  if (!askedSeller || !askedBuyer) return false;
+  if (!report.sellerResponse?.trim()) return false;
+  if (!report.buyerResponse?.trim()) return false;
+  return true;
+}
+
 reportSchema.methods.buildDetailForViewer = function buildDetailForViewer(viewerRole) {
   const lines = [];
 
@@ -160,7 +215,7 @@ reportSchema.methods.buildDetailForViewer = function buildDetailForViewer(viewer
 
   lines.push(`Your message: ${this.message}`);
 
-  if (this.disputeStage === "awaiting_seller" || this.adminMessageToSeller) {
+  if (this.adminMessageToSeller) {
     if (viewerRole === "seller") {
       lines.push(
         `Admin asks you: ${
@@ -172,6 +227,18 @@ reportSchema.methods.buildDetailForViewer = function buildDetailForViewer(viewer
     }
   }
 
+  if (this.adminMessageToBuyer) {
+    if (viewerRole === "buyer") {
+      lines.push(
+        `Admin asks you: ${
+          this.adminMessageToBuyer || "Please provide more details about this dispute."
+        }`,
+      );
+    } else {
+      lines.push("Admin has contacted the buyer for a response.");
+    }
+  }
+
   if (this.sellerResponse) {
     if (viewerRole === "seller") {
       lines.push(`Your response: ${this.sellerResponse}`);
@@ -179,6 +246,16 @@ reportSchema.methods.buildDetailForViewer = function buildDetailForViewer(viewer
       lines.push("Seller has submitted a response. Admin is reviewing.");
     } else {
       lines.push(`Seller response: ${this.sellerResponse}`);
+    }
+  }
+
+  if (this.buyerResponse) {
+    if (viewerRole === "buyer") {
+      lines.push(`Your response: ${this.buyerResponse}`);
+    } else if (viewerRole === "seller") {
+      lines.push("Buyer has submitted a response. Admin is reviewing.");
+    } else {
+      lines.push(`Buyer response: ${this.buyerResponse}`);
     }
   }
 
@@ -197,7 +274,14 @@ reportSchema.methods.toReporterJSON = function toReporterJSON(viewerUserId, view
   const isInvolvedSeller = idString(this.involvedSellerId) === viewerId;
   const needsSellerResponse =
     isInvolvedSeller &&
-    this.disputeStage === "awaiting_seller" &&
+    Boolean(this.adminMessageToSeller?.trim()) &&
+    !this.sellerResponse?.trim() &&
+    this.status !== "resolved";
+  const isInvolvedBuyer = idString(this.involvedBuyerId) === viewerId;
+  const needsBuyerResponse =
+    isInvolvedBuyer &&
+    Boolean(this.adminMessageToBuyer?.trim()) &&
+    !this.buyerResponse?.trim() &&
     this.status !== "resolved";
 
   return {
@@ -214,12 +298,15 @@ reportSchema.methods.toReporterJSON = function toReporterJSON(viewerUserId, view
     isDispute: Boolean(this.involvedSellerId && this.involvedBuyerId),
     isReporter,
     needsSellerResponse,
+    needsBuyerResponse,
     productTitle: this.productTitle || "",
     sellerName: this.sellerName || "",
     buyerName: this.buyerName || "",
     orderId: idString(this.orderId),
     adminMessageToSeller: this.adminMessageToSeller || "",
+    adminMessageToBuyer: this.adminMessageToBuyer || "",
     sellerResponse: this.sellerResponse || "",
+    buyerResponse: this.buyerResponse || "",
     decision: this.decision || this.adminReply || "",
     detail: this.buildDetailForViewer(viewerRole),
     createdAt: this.createdAt,
@@ -273,8 +360,12 @@ reportSchema.methods.toAdminJSON = function toAdminJSON() {
     isDispute: Boolean(this.involvedSellerId && this.involvedBuyerId),
     disputeStage: this.disputeStage,
     adminMessageToSeller: this.adminMessageToSeller || "",
+    adminMessageToBuyer: this.adminMessageToBuyer || "",
     sellerResponse: this.sellerResponse || "",
     sellerRespondedAt: this.sellerRespondedAt || null,
+    buyerResponse: this.buyerResponse || "",
+    buyerRespondedAt: this.buyerRespondedAt || null,
+    mediationComplete: isMediationComplete(this),
     decision: this.decision || "",
     date: formatDateLabel(this.createdAt),
     status: adminStatus,
@@ -289,5 +380,7 @@ const Report = mongoose.model("Report", reportSchema);
 Report.BUYER_ISSUE_TYPES = BUYER_ISSUE_TYPES;
 Report.SELLER_ISSUE_TYPES = SELLER_ISSUE_TYPES;
 Report.ALL_ISSUE_TYPES = ALL_ISSUE_TYPES;
+Report.syncDisputeStage = syncDisputeStage;
+Report.isMediationComplete = isMediationComplete;
 
 module.exports = Report;

@@ -2,6 +2,7 @@ const Order = require("../models/Order");
 const {
   getFulfillmentLabel,
   syncProductForOrder,
+  buildOrderLogistics,
 } = require("../services/orderStatusService");
 const { getEscrowLabel } = require("../services/escrowService");
 
@@ -215,6 +216,10 @@ function toRentalAdminJSON(order) {
     size: order.size || "",
     rentStart: order.rentStart || "",
     rentEnd: order.rentEnd || "",
+    shippedAt: order.shippedAt || null,
+    deliveryConfirmedAt: order.deliveryConfirmedAt || null,
+    returnConfirmedAt: order.returnConfirmedAt || null,
+    logistics: buildOrderLogistics(order),
     createdAt: order.createdAt,
   };
 }
@@ -241,27 +246,7 @@ function toSaleAdminJSON(order) {
   const fulfillmentLabel = getFulfillmentLabel(order);
   const productStatus = product?.status || "—";
 
-  const logistics = [
-    {
-      label:
-        order.paymentStatus === "paid"
-          ? "Stripe payment confirmed"
-          : order.status === "completed"
-            ? "Order completed"
-            : order.status === "approved"
-              ? "Seller approved order"
-              : order.status === "cancelled" || order.status === "rejected"
-                ? "Order closed"
-                : "Order placed",
-      date: formatDateTimeLabel(order.paidAt || order.updatedAt || order.createdAt),
-      active: true,
-    },
-    {
-      label: "Order created",
-      date: formatDateTimeLabel(order.createdAt),
-      active: false,
-    },
-  ];
+  const logistics = buildOrderLogistics(order);
 
   return {
     id,
@@ -301,6 +286,9 @@ function toSaleAdminJSON(order) {
     disputeReason: order.disputeReason || "",
     saleEscrowAutoReleaseAt: order.saleEscrowAutoReleaseAt || null,
     logistics,
+    shippedAt: order.shippedAt || null,
+    deliveryConfirmedAt: order.deliveryConfirmedAt || null,
+    returnConfirmedAt: order.returnConfirmedAt || null,
     size: order.size || "",
     createdAt: order.createdAt,
   };

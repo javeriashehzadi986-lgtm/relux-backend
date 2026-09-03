@@ -49,6 +49,15 @@ async function notifyUser(payload) {
   return notification;
 }
 
+async function notifyAdmins(payload) {
+  const admins = await User.find({ role: "admin" }).select("_id").lean();
+  if (!admins.length) return [];
+
+  return Promise.all(
+    admins.map((admin) => notifyUser({ ...payload, userId: admin._id })),
+  );
+}
+
 function notifyRentalRequest({ sellerId, productTitle, orderId }) {
   return notifyUser({
     userId: sellerId,
@@ -161,6 +170,22 @@ function notifyBuyerMarkedReturn({ sellerId, productTitle, orderId }) {
     category: "orders",
     iconVariant: "primary",
     link: "/sellerProfile?section=orders",
+    meta: orderId ? { orderId: String(orderId) } : undefined,
+  });
+}
+
+function notifyBuyerOrderShipped({ buyerId, productTitle, orderId, orderType = "sale" }) {
+  return notifyUser({
+    userId: buyerId,
+    title: "Order Shipped",
+    message:
+      orderType === "rental"
+        ? "Your rental item has been shipped. Confirm receipt when it arrives."
+        : "Your purchase has been shipped. Confirm receipt when it arrives.",
+    highlight: productTitle,
+    category: "orders",
+    iconVariant: "primary",
+    link: "/profile?section=orders",
     meta: orderId ? { orderId: String(orderId) } : undefined,
   });
 }
@@ -469,6 +494,35 @@ function notifyReportResolved({ reporterId, reporterRole, reportId, subject, dec
   });
 }
 
+function notifyDisputeMediationRequested({ userId, role, reportId, subject, message }) {
+  const link =
+    role === "seller" ? "/sellerProfile?section=support" : "/profile?section=support";
+
+  return notifyUser({
+    userId,
+    title: "Admin Needs Your Response",
+    message:
+      message ||
+      "An admin has asked you to respond to a dispute in Support Center. Open your request and submit your side.",
+    highlight: subject ? `#${reportId} — ${subject}` : `#${reportId}`,
+    category: "system",
+    iconVariant: "tertiary",
+    link,
+  });
+}
+
+function notifyDisputePartyResponded({ reportId, subject, responderRole, orderId }) {
+  const roleLabel = responderRole === "seller" ? "Seller" : "Buyer";
+  return notifyAdmins({
+    title: "Dispute Response Received",
+    message: `${roleLabel} responded to dispute #${reportId}. Review both responses in Support Center before releasing escrow.`,
+    highlight: subject || `#${reportId}`,
+    category: "system",
+    iconVariant: "primary",
+    link: "/admin/support",
+  });
+}
+
 function notifySettlementProposed({
   buyerId,
   productTitle,
@@ -617,6 +671,7 @@ module.exports = {
   notifyRentalCompleted,
   notifyBuyerConfirmedReceipt,
   notifyBuyerMarkedReturn,
+  notifyBuyerOrderShipped,
   notifyBuyerReturnInstructions,
   notifyEscrowReleased,
   notifyListingApproved,
@@ -635,6 +690,8 @@ module.exports = {
   notifyRentalOrderPaid,
   notifySellerDispatchDetails,
   notifyReportResolved,
+  notifyDisputeMediationRequested,
+  notifyDisputePartyResponded,
   notifySettlementProposed,
   notifySettlementAccepted,
   notifySettlementDisputed,
