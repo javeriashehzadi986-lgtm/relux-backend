@@ -7,13 +7,18 @@ const {
   notifyRentalCompleted,
   notifyBuyerOrderShipped,
   notifySellerConfirmedReturn,
+  notifyEscrowReleased,
 } = require("../services/notificationService");
 const {
   FULFILLMENT,
   ensurePaid,
   syncProductForOrder,
 } = require("../services/orderStatusService");
-const { SALE_AUTO_RELEASE_MS } = require("../services/escrowService");
+const {
+  SALE_AUTO_RELEASE_MS,
+  releaseRentalEscrow,
+  formatPkr,
+} = require("../services/escrowService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -244,7 +249,7 @@ async function confirmReturnReceived(req, res) {
       _id: req.params.id,
       sellerId: req.user._id,
       type: "rental",
-    }).populate("productId", "title");
+    }).populate("productId", "title itemPrice rentPrice");
 
     if (!order) {
       return res.status(404).json({ message: "Rental order not found" });
@@ -260,25 +265,57 @@ async function confirmReturnReceived(req, res) {
         message: "Buyer must mark the item as returned before you can confirm it",
       });
     }
-    if (order.sellerConfirmedReturnAt) {
+
+    if (order.escrowSettlementStatus === "disputed") {
+      return res.status(400).json({
+        message: "This return is under admin dispute review. Escrow cannot be released here.",
+      });
+    }
+
+    if (order.escrowStatus === "released") {
       return res.json({
-        message: "Return already confirmed",
+        message: "Return already confirmed and escrow released",
         order: order.toSellerJSON(),
       });
     }
 
-    order.sellerConfirmedReturnAt = new Date();
+    order.sellerConfirmedReturnAt = order.sellerConfirmedReturnAt || new Date();
+    order.returnConfirmedAt = order.returnConfirmedAt || new Date();
+    order.escrowSettlementStatus = "accepted";
+    order.settlementAcceptedAt = new Date();
+    order.damageDeductionPkr = 0;
+    order.lateFeePkr = 0;
     await order.save();
+
+    const product = order.productId;
+    const result = await releaseRentalEscrow(order, {
+      damageDeductionPkr: 0,
+      lateFeePkr: 0,
+    });
 
     notifySellerConfirmedReturn({
       buyerId: order.buyerId,
-      productTitle: order.productId?.title ?? "your rental item",
+      productTitle: product?.title ?? "your rental item",
       orderId: order._id,
     });
 
+    notifyEscrowReleased({
+      buyerId: order.buyerId,
+      sellerId: order.sellerId,
+      productTitle: product?.title ?? "rental item",
+      orderId: order._id,
+      refundLabel: formatPkr(result.refundAmountPkr),
+      rentalChargeLabel: formatPkr(result.rentalChargePkr),
+      sellerPayoutLabel: formatPkr(result.sellerPayoutPkr),
+      transferSent: Boolean(result.stripeTransferId),
+    });
+
     res.json({
-      message: "Return confirmed. Propose settlement to release escrow.",
-      order: order.toSellerJSON(),
+      message:
+        result.refundAmountPkr > 0
+          ? `Return confirmed — escrow released. ${formatPkr(result.refundAmountPkr)} refunded to buyer.`
+          : "Return confirmed — escrow released to seller.",
+      order: result.order.toSellerJSON(),
     });
   } catch (error) {
     res.status(400).json({ message: error.message || getErrorMessage(error) });

@@ -173,9 +173,6 @@ function getPaymentLabel(order) {
     if (order.escrowSettlementStatus === "disputed") {
       return "Paid — held (dispute under review)";
     }
-    if (order.escrowSettlementStatus === "proposed") {
-      return "Paid — settlement proposed";
-    }
     return "Paid — held in escrow";
   }
 

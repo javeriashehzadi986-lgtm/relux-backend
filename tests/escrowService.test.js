@@ -131,7 +131,7 @@ describe("Escrow Service — Chapter 5: Rental Payment Hold & Release", () => {
           productId: { itemPrice: 50000, rentPrice: 2000 },
           save: jest.fn(),
         }),
-      ).rejects.toThrow(/buyer accepts or admin resolves/);
+      ).rejects.toThrow(/seller confirms the return or admin resolves/);
     });
 
     it("TC-ES-10: skips duplicate release when already released", async () => {

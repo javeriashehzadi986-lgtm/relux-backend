@@ -481,23 +481,17 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       this.escrowStatus !== "released"
     ) {
       const settlementStatus = this.escrowSettlementStatus || "none";
-      if (settlementStatus === "proposed") {
-        actions.push(
-          {
-            id: "accept-settlement",
-            label: "Accept Settlement",
-            variant: "primary",
-          },
-          {
-            id: "dispute-settlement",
-            label: "Dispute Settlement",
-            variant: "outline",
-          },
-        );
-      } else if (settlementStatus === "disputed") {
+      if (settlementStatus === "disputed") {
         actions.push({
           id: "dispute-pending",
           label: "Dispute Under Review",
+          variant: "outline",
+          disabled: true,
+        });
+      } else {
+        actions.push({
+          id: "awaiting-seller",
+          label: "Awaiting Seller Confirmation",
           variant: "outline",
           disabled: true,
         });
@@ -686,7 +680,6 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
         escrowPendingRelease
       ) {
         const settlementStatus = this.escrowSettlementStatus || "none";
-        const sellerConfirmedReturn = Boolean(this.sellerConfirmedReturnAt);
 
         if (settlementStatus === "disputed") {
           actions.push({
@@ -695,7 +688,7 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
             variant: "outline",
             disabled: true,
           });
-        } else if (!sellerConfirmedReturn) {
+        } else {
           actions.push(
             {
               id: "confirm-return",
@@ -708,26 +701,6 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
               variant: "outline",
             },
           );
-        } else if (settlementStatus === "none") {
-          actions.push(
-            {
-              id: "propose-settlement",
-              label: "Propose Settlement",
-              variant: "primary",
-            },
-            {
-              id: "dispute-return",
-              label: "Report Return Issue",
-              variant: "outline",
-            },
-          );
-        } else if (settlementStatus === "proposed") {
-          actions.push({
-            id: "awaiting-buyer",
-            label: "Awaiting Buyer Review",
-            variant: "outline",
-            disabled: true,
-          });
         }
       } else if (
         (this.type === "sale" &&

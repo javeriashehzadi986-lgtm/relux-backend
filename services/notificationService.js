@@ -210,7 +210,7 @@ function notifyBuyerMarkedReturn({ sellerId, productTitle, orderId }) {
     userId: sellerId,
     title: "Buyer Marked Item Returned",
     message:
-      "The buyer marked the rental item as returned. Confirm the return, then propose settlement to release escrow.",
+      "The buyer marked the rental item as returned. Confirm the return to release escrow, or report a return issue for admin review.",
     highlight: productTitle,
     category: "orders",
     iconVariant: "primary",
@@ -224,7 +224,7 @@ function notifySellerConfirmedReturn({ buyerId, productTitle, orderId }) {
     userId: buyerId,
     title: "Seller Confirmed Your Return",
     message:
-      "The seller confirmed they received your return. They will propose a settlement next for escrow release.",
+      "The seller confirmed your return. Escrow has been released (rental charge deducted, remaining refunded where applicable).",
     highlight: productTitle,
     category: "orders",
     iconVariant: "primary",
@@ -647,7 +647,7 @@ function notifySettlementDisputed({ buyerId, sellerId, productTitle, orderId }) 
       userId: buyerId,
       title: "Rental Return Disputed",
       message:
-        "A return/settlement dispute was opened. An admin will contact both parties and decide the escrow split.",
+        "A return dispute was opened. An admin will contact both parties and decide the escrow split.",
       highlight: productTitle,
       category: "payments",
       iconVariant: "tertiary",
