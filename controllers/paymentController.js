@@ -16,7 +16,7 @@ const {
   getFrontendUrl,
 } = require("../services/stripeService");
 
-const DEFAULT_DELIVERY_PKR = 0;
+const DEFAULT_DELIVERY_PKR = 300;
 
 function getErrorMessage(error) {
   if (error?.type === "StripeInvalidRequestError") {
@@ -281,7 +281,7 @@ async function createSaleCheckout(req, res) {
           unit_amount: toStripeUnitAmount(deliveryCharges),
           product_data: {
             name: "Delivery charges",
-            description: `Shipping within Pakistan: PKR ${deliveryCharges.toLocaleString("en-PK")}`,
+            description: `Flat delivery fee within Pakistan: PKR ${deliveryCharges.toLocaleString("en-PK")}`,
           },
         },
       });

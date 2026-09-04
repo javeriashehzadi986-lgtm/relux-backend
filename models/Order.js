@@ -299,6 +299,10 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
     escrowLabel: getEscrowLabel(this),
     rentalChargePkr: this.rentalChargePkr || 0,
     refundAmountPkr: this.refundAmountPkr || 0,
+    refundedAt: this.refundedAt || null,
+    refundReference: this.stripeRefundId
+      ? String(this.stripeRefundId).replace(/^re_/, "").slice(-10).toUpperCase()
+      : "",
     damageDeductionPkr: this.damageDeductionPkr || 0,
     lateFeePkr: this.lateFeePkr || 0,
     sellerPayoutPkr: this.sellerPayoutPkr || 0,

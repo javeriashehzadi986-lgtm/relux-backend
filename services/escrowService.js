@@ -327,10 +327,12 @@ async function releaseRentalEscrow(order, overrides = {}) {
       demoMode = demoMode || refundResult.demoMode;
       if (stripeRefundId) {
         order.stripeRefundId = stripeRefundId;
+      }
+      if (!order.refundedAt) {
         order.refundedAt = new Date();
-        if (breakdown.refundAmountPkr >= breakdown.depositPkr) {
-          order.paymentStatus = "refunded";
-        }
+      }
+      if (breakdown.refundAmountPkr >= breakdown.depositPkr) {
+        order.paymentStatus = "refunded";
       }
     }
 
@@ -406,6 +408,8 @@ async function releaseSaleEscrow(order, overrides = {}, releaseReason = "buyer_c
       demoMode = demoMode || refundResult.demoMode;
       if (stripeRefundId) {
         order.stripeRefundId = stripeRefundId;
+      }
+      if (!order.refundedAt) {
         order.refundedAt = new Date();
       }
     }
