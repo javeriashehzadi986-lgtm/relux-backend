@@ -208,10 +208,10 @@ async function adminResolveSaleEscrow(req, res) {
       if (report) {
         report.status = "resolved";
         report.disputeStage = "resolved";
-        report.decision =
-          decision?.trim() ||
-          `Escrow settled: ${formatPkr(breakdown.refundAmountPkr)} refunded to buyer, ${formatPkr(breakdown.sellerPayoutPkr)} to seller.`;
-        report.adminReply = report.decision;
+        report.decision = decision?.trim() || report.adminReply || "";
+        if (report.decision) {
+          report.adminReply = report.decision;
+        }
         report.reviewedAt = new Date();
         report.reviewedBy = req.user._id;
         await report.save();

@@ -17,6 +17,8 @@ function buildFilter(userId, filter) {
     query.category = "orders";
   } else if (filter === "payments") {
     query.category = "payments";
+  } else if (filter === "bids") {
+    query.category = "bids";
   }
 
   return query;

@@ -26,17 +26,32 @@ async function createNotification(payload) {
 async function sendEmailForNotification(userId, payload) {
   try {
     const user = await User.findById(userId).select("email notificationPrefs").lean();
-    if (!user?.email || user.notificationPrefs?.email === false) return;
+    if (!user?.email) {
+      console.warn("[email] skip — user has no email", String(userId));
+      return;
+    }
+    if (user.notificationPrefs?.email === false) {
+      console.warn("[email] skip — email notifications disabled for", user.email);
+      return;
+    }
 
-    await sendNotificationEmail({
+    const result = await sendNotificationEmail({
       to: user.email,
       title: payload.title,
       message: payload.message,
       highlight: payload.highlight,
       link: payload.link,
     });
-  } catch {
-    // Email failures should not break in-app notifications.
+
+    if (result?.skipped) {
+      console.warn("[email] skip —", result.reason, "to", user.email, payload.title);
+    } else if (result?.error) {
+      console.error("[email] failed —", result.error, "to", user.email, payload.title);
+    } else if (result?.sent) {
+      console.log("[email] sent —", payload.title, "→", user.email);
+    }
+  } catch (error) {
+    console.error("[email] unexpected error", error.message || error);
   }
 }
 
@@ -110,16 +125,28 @@ function notifyRentalOrderPaid({ sellerId, productTitle, orderId }) {
 
 async function notifySellerDispatchDetails({ sellerId, order, product, buyer }) {
   const seller = await User.findById(sellerId).select("email name").lean();
-  if (!seller?.email) return null;
+  if (!seller?.email) {
+    console.warn("[email] dispatch skip — seller has no email", String(sellerId));
+    return null;
+  }
 
   try {
-    return await sendSellerDispatchDetailsEmail({
+    const result = await sendSellerDispatchDetailsEmail({
       to: seller.email,
       order,
       product,
       buyer,
     });
-  } catch {
+    if (result?.skipped) {
+      console.warn("[email] dispatch skip —", result.reason, "to", seller.email);
+    } else if (result?.error) {
+      console.error("[email] dispatch failed —", result.error, "to", seller.email);
+    } else if (result?.sent) {
+      console.log("[email] dispatch sent →", seller.email);
+    }
+    return result;
+  } catch (error) {
+    console.error("[email] dispatch unexpected error", error.message || error);
     return null;
   }
 }
@@ -343,6 +370,20 @@ function notifyNewBid({ sellerId, productTitle, productId, amountFormatted }) {
   });
 }
 
+function notifyBidPlaced({ buyerId, productTitle, productId, amountFormatted }) {
+  return notifyUser({
+    userId: buyerId,
+    title: "Bid Placed Successfully",
+    message: amountFormatted
+      ? `Your bid of ${amountFormatted} was placed. We'll notify you if you're outbid or when the auction ends.`
+      : "Your bid was placed successfully. We'll notify you if you're outbid or when the auction ends.",
+    highlight: productTitle,
+    category: "bids",
+    iconVariant: "primary",
+    link: productId ? `/dress/${productId}` : "/profile?section=bids",
+  });
+}
+
 function notifyOutbid({ buyerId, productTitle, productId }) {
   return notifyUser({
     userId: buyerId,
@@ -360,12 +401,12 @@ function notifyAuctionWon({ buyerId, productTitle, productId, amountFormatted })
     userId: buyerId,
     title: "You Won the Auction",
     message: amountFormatted
-      ? `Congratulations! You won with a final bid of ${amountFormatted}. The seller will follow up next.`
-      : "Congratulations! You won this auction. The seller will follow up next.",
+      ? `Congratulations! You won with a final bid of ${amountFormatted}. Open checkout to complete your purchase.`
+      : "Congratulations! You won this auction. Open checkout to complete your purchase.",
     highlight: productTitle,
     category: "bids",
     iconVariant: "primary",
-    link: productId ? `/dress/${productId}` : "/profile?section=bids",
+    link: productId ? `/dress/${productId}/checkout` : "/profile?section=bids",
   });
 }
 
@@ -680,6 +721,7 @@ module.exports = {
   notifySellerRejected,
   notifySellerMoreInfoRequested,
   notifyNewBid,
+  notifyBidPlaced,
   notifyOutbid,
   notifyAuctionWon,
   notifyAuctionEnded,

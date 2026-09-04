@@ -277,6 +277,9 @@ async function sendSellerDispatchDetailsEmail({ to, order, product, buyer }) {
 
 async function sendEmail({ to, subject, html, text }) {
   if (!isConfigured()) {
+    console.warn(
+      "[emailService] SendGrid not configured (need SENDGRID_API_KEY + SENDGRID_FROM_EMAIL)",
+    );
     return { sent: false, skipped: true, reason: "sendgrid_not_configured" };
   }
 
@@ -295,7 +298,8 @@ async function sendEmail({ to, subject, html, text }) {
     return { sent: true };
   } catch (error) {
     const detail = error?.response?.body?.errors?.[0]?.message || error.message;
-    console.error("[emailService] Send failed:", detail);
+    const body = error?.response?.body ? JSON.stringify(error.response.body) : "";
+    console.error("[emailService] Send failed:", detail, body || "");
     return { sent: false, error: detail };
   }
 }

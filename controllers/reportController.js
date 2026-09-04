@@ -176,11 +176,19 @@ async function submitSellerResponse(req, res) {
       });
     }
 
-    if (report.sellerResponse?.trim()) {
-      return res.status(400).json({ message: "You have already submitted a response" });
+    const text = response.trim();
+    if (!Array.isArray(report.sellerResponses)) {
+      report.sellerResponses = [];
     }
-
-    report.sellerResponse = response.trim();
+    // Migrate any legacy single response into the thread once.
+    if (report.sellerResponse?.trim() && report.sellerResponses.length === 0) {
+      report.sellerResponses.push({
+        text: report.sellerResponse.trim(),
+        createdAt: report.sellerRespondedAt || report.updatedAt || new Date(),
+      });
+    }
+    report.sellerResponses.push({ text, createdAt: new Date() });
+    report.sellerResponse = text;
     report.sellerRespondedAt = new Date();
     report.status = "in_progress";
     Report.syncDisputeStage(report);
@@ -233,11 +241,18 @@ async function submitBuyerResponse(req, res) {
       });
     }
 
-    if (report.buyerResponse?.trim()) {
-      return res.status(400).json({ message: "You have already submitted a response" });
+    const text = response.trim();
+    if (!Array.isArray(report.buyerResponses)) {
+      report.buyerResponses = [];
     }
-
-    report.buyerResponse = response.trim();
+    if (report.buyerResponse?.trim() && report.buyerResponses.length === 0) {
+      report.buyerResponses.push({
+        text: report.buyerResponse.trim(),
+        createdAt: report.buyerRespondedAt || report.updatedAt || new Date(),
+      });
+    }
+    report.buyerResponses.push({ text, createdAt: new Date() });
+    report.buyerResponse = text;
     report.buyerRespondedAt = new Date();
     report.status = "in_progress";
     Report.syncDisputeStage(report);
@@ -305,11 +320,6 @@ async function updateAdminReport(req, res) {
 
     const wasResolved = report.status === "resolved";
 
-    const defaultSellerMessage =
-      "Please respond to this buyer complaint with your side of the story.";
-    const defaultBuyerMessage =
-      "Please provide any additional details about this dispute so we can resolve it fairly.";
-
     // Ask both buyer and seller to respond (required before escrow release)
     if (askBoth) {
       if (!report.involvedSellerId || !report.involvedBuyerId) {
@@ -322,17 +332,23 @@ async function updateAdminReport(req, res) {
       const sellerNote =
         (typeof messageToSeller === "string" && messageToSeller.trim()) ||
         (typeof adminReply === "string" && adminReply.trim()) ||
-        defaultSellerMessage;
+        "";
       const buyerNote =
         (typeof messageToBuyer === "string" && messageToBuyer.trim()) ||
         (typeof adminReply === "string" && adminReply.trim()) ||
-        defaultBuyerMessage;
+        "";
+
+      if (!sellerNote || !buyerNote) {
+        return res.status(400).json({
+          message: "Write your own message for buyer and seller before contacting them.",
+        });
+      }
 
       report.adminMessageToSeller = sellerNote;
       report.adminMessageToBuyer = buyerNote;
       report.status = "in_progress";
       report.adminReply =
-        "We have contacted the buyer and seller and are waiting for their responses.";
+        (typeof adminReply === "string" && adminReply.trim()) || sellerNote;
       report.reviewedAt = new Date();
       report.reviewedBy = req.user._id;
       Report.syncDisputeStage(report);
@@ -371,13 +387,18 @@ async function updateAdminReport(req, res) {
       const note =
         (typeof messageToSeller === "string" && messageToSeller.trim()) ||
         (typeof adminReply === "string" && adminReply.trim()) ||
-        defaultSellerMessage;
+        "";
+
+      if (!note) {
+        return res.status(400).json({
+          message: "Write your own message for the seller before contacting them.",
+        });
+      }
 
       report.adminMessageToSeller = note;
       report.status = "in_progress";
       report.adminReply =
-        (typeof adminReply === "string" && adminReply.trim()) ||
-        "We have contacted the seller and are waiting for their response.";
+        (typeof adminReply === "string" && adminReply.trim()) || note;
       report.reviewedAt = new Date();
       report.reviewedBy = req.user._id;
       Report.syncDisputeStage(report);
@@ -409,13 +430,18 @@ async function updateAdminReport(req, res) {
       const note =
         (typeof messageToBuyer === "string" && messageToBuyer.trim()) ||
         (typeof adminReply === "string" && adminReply.trim()) ||
-        defaultBuyerMessage;
+        "";
+
+      if (!note) {
+        return res.status(400).json({
+          message: "Write your own message for the buyer before contacting them.",
+        });
+      }
 
       report.adminMessageToBuyer = note;
       report.status = "in_progress";
       report.adminReply =
-        (typeof adminReply === "string" && adminReply.trim()) ||
-        "We have contacted the buyer and are waiting for their response.";
+        (typeof adminReply === "string" && adminReply.trim()) || note;
       report.reviewedAt = new Date();
       report.reviewedBy = req.user._id;
       Report.syncDisputeStage(report);
@@ -438,6 +464,17 @@ async function updateAdminReport(req, res) {
     if (status) {
       if (!["open", "in_progress", "resolved"].includes(status)) {
         return res.status(400).json({ message: "Invalid status" });
+      }
+      if (status === "resolved") {
+        const resolveText =
+          (typeof decision === "string" && decision.trim()) ||
+          (typeof adminReply === "string" && adminReply.trim()) ||
+          "";
+        if (!resolveText) {
+          return res.status(400).json({
+            message: "Write your own decision/message before resolving or dismissing.",
+          });
+        }
       }
       report.status = status;
       if (status === "resolved") {

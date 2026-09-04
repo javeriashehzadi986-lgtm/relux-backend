@@ -4,6 +4,7 @@ const Product = require("../models/Product");
 const User = require("../models/User");
 const {
   notifyNewBid,
+  notifyBidPlaced,
   notifyOutbid,
 } = require("../services/notificationService");
 const {
@@ -285,20 +286,29 @@ async function placeBid(req, res) {
       amount,
     });
 
-    notifyNewBid({
-      sellerId: product.sellerId,
-      productTitle: product.title,
-      productId: product._id,
-      amountFormatted: formatRs(amount),
-    });
+    const amountFormatted = formatRs(amount);
 
-    if (highestBid && String(highestBid.userId) !== String(req.user._id)) {
-      notifyOutbid({
-        buyerId: highestBid.userId,
+    await Promise.all([
+      notifyBidPlaced({
+        buyerId: req.user._id,
         productTitle: product.title,
         productId: product._id,
-      });
-    }
+        amountFormatted,
+      }),
+      notifyNewBid({
+        sellerId: product.sellerId,
+        productTitle: product.title,
+        productId: product._id,
+        amountFormatted,
+      }),
+      highestBid && String(highestBid.userId) !== String(req.user._id)
+        ? notifyOutbid({
+            buyerId: highestBid.userId,
+            productTitle: product.title,
+            productId: product._id,
+          })
+        : Promise.resolve(),
+    ]);
 
     const summary = await buildAuctionSummary(product, req.user._id);
     const history = await buildBidHistory(product._id);
@@ -420,6 +430,11 @@ async function getMyBids(req, res) {
       _id: { $in: productIds },
       listingType: "sale",
     });
+
+    // Backfill win notifications for any ended auctions this buyer won.
+    await Promise.all(
+      products.map((product) => maybeFinalizeProduct(product).catch(() => {})),
+    );
 
     const cards = (
       await Promise.all(

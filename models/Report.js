@@ -114,11 +114,29 @@ const reportSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    sellerResponses: {
+      type: [
+        {
+          text: { type: String, trim: true, required: true },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
+    },
     sellerRespondedAt: { type: Date },
     buyerResponse: {
       type: String,
       trim: true,
       default: "",
+    },
+    buyerResponses: {
+      type: [
+        {
+          text: { type: String, trim: true, required: true },
+          createdAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
     },
     buyerRespondedAt: { type: Date },
     decision: {
@@ -159,6 +177,50 @@ function statusVariant(status) {
   if (status === "resolved") return "resolved";
   if (status === "in_progress") return "open";
   return "open";
+}
+
+function formatResponseThread(entries, fallbackSingle) {
+  const list = Array.isArray(entries) ? entries.filter((item) => item?.text?.trim()) : [];
+  if (list.length > 0) {
+    return list
+      .map((item, index) => {
+        const when = item.createdAt
+          ? new Date(item.createdAt).toLocaleString("en-PK", {
+              day: "numeric",
+              month: "short",
+              hour: "numeric",
+              minute: "2-digit",
+            })
+          : "";
+        return list.length > 1
+          ? `${index + 1}. ${item.text.trim()}${when ? ` (${when})` : ""}`
+          : item.text.trim();
+      })
+      .join("\n\n");
+  }
+  return String(fallbackSingle || "").trim();
+}
+
+function getSellerResponseEntries(report) {
+  const list = Array.isArray(report.sellerResponses)
+    ? report.sellerResponses.filter((item) => item?.text?.trim())
+    : [];
+  if (list.length > 0) return list;
+  if (report.sellerResponse?.trim()) {
+    return [{ text: report.sellerResponse.trim(), createdAt: report.sellerRespondedAt || null }];
+  }
+  return [];
+}
+
+function getBuyerResponseEntries(report) {
+  const list = Array.isArray(report.buyerResponses)
+    ? report.buyerResponses.filter((item) => item?.text?.trim())
+    : [];
+  if (list.length > 0) return list;
+  if (report.buyerResponse?.trim()) {
+    return [{ text: report.buyerResponse.trim(), createdAt: report.buyerRespondedAt || null }];
+  }
+  return [];
 }
 
 function idString(value) {
@@ -239,23 +301,25 @@ reportSchema.methods.buildDetailForViewer = function buildDetailForViewer(viewer
     }
   }
 
-  if (this.sellerResponse) {
+  if (this.sellerResponse || getSellerResponseEntries(this).length) {
+    const thread = formatResponseThread(getSellerResponseEntries(this), this.sellerResponse);
     if (viewerRole === "seller") {
-      lines.push(`Your response: ${this.sellerResponse}`);
+      lines.push(`Your responses:\n${thread}`);
     } else if (viewerRole === "buyer") {
       lines.push("Seller has submitted a response. Admin is reviewing.");
     } else {
-      lines.push(`Seller response: ${this.sellerResponse}`);
+      lines.push(`Seller responses:\n${thread}`);
     }
   }
 
-  if (this.buyerResponse) {
+  if (this.buyerResponse || getBuyerResponseEntries(this).length) {
+    const thread = formatResponseThread(getBuyerResponseEntries(this), this.buyerResponse);
     if (viewerRole === "buyer") {
-      lines.push(`Your response: ${this.buyerResponse}`);
+      lines.push(`Your responses:\n${thread}`);
     } else if (viewerRole === "seller") {
       lines.push("Buyer has submitted a response. Admin is reviewing.");
     } else {
-      lines.push(`Buyer response: ${this.buyerResponse}`);
+      lines.push(`Buyer responses:\n${thread}`);
     }
   }
 
@@ -275,14 +339,21 @@ reportSchema.methods.toReporterJSON = function toReporterJSON(viewerUserId, view
   const needsSellerResponse =
     isInvolvedSeller &&
     Boolean(this.adminMessageToSeller?.trim()) &&
-    !this.sellerResponse?.trim() &&
     this.status !== "resolved";
   const isInvolvedBuyer = idString(this.involvedBuyerId) === viewerId;
   const needsBuyerResponse =
     isInvolvedBuyer &&
     Boolean(this.adminMessageToBuyer?.trim()) &&
-    !this.buyerResponse?.trim() &&
     this.status !== "resolved";
+
+  const sellerEntries = getSellerResponseEntries(this).map((item) => ({
+    text: item.text,
+    createdAt: item.createdAt || null,
+  }));
+  const buyerEntries = getBuyerResponseEntries(this).map((item) => ({
+    text: item.text,
+    createdAt: item.createdAt || null,
+  }));
 
   return {
     id: this.reportId,
@@ -306,7 +377,9 @@ reportSchema.methods.toReporterJSON = function toReporterJSON(viewerUserId, view
     adminMessageToSeller: this.adminMessageToSeller || "",
     adminMessageToBuyer: this.adminMessageToBuyer || "",
     sellerResponse: this.sellerResponse || "",
+    sellerResponses: sellerEntries,
     buyerResponse: this.buyerResponse || "",
+    buyerResponses: buyerEntries,
     decision: this.decision || this.adminReply || "",
     detail: this.buildDetailForViewer(viewerRole),
     createdAt: this.createdAt,
@@ -362,8 +435,16 @@ reportSchema.methods.toAdminJSON = function toAdminJSON() {
     adminMessageToSeller: this.adminMessageToSeller || "",
     adminMessageToBuyer: this.adminMessageToBuyer || "",
     sellerResponse: this.sellerResponse || "",
+    sellerResponses: getSellerResponseEntries(this).map((item) => ({
+      text: item.text,
+      createdAt: item.createdAt || null,
+    })),
     sellerRespondedAt: this.sellerRespondedAt || null,
     buyerResponse: this.buyerResponse || "",
+    buyerResponses: getBuyerResponseEntries(this).map((item) => ({
+      text: item.text,
+      createdAt: item.createdAt || null,
+    })),
     buyerRespondedAt: this.buyerRespondedAt || null,
     mediationComplete: isMediationComplete(this),
     decision: this.decision || "",
