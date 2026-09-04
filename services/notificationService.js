@@ -73,11 +73,28 @@ async function notifyAdmins(payload) {
   );
 }
 
-function notifyRentalRequest({ sellerId, productTitle, orderId }) {
+function notifyRentalRequest({ sellerId, productTitle, orderId, rentalDays, rentStart, rentEnd }) {
+  const days = Math.max(1, Number(rentalDays) || 1);
+  const daysText = days === 1 ? "1 day" : `${days} days`;
+  const formatDate = (iso) => {
+    if (!iso) return "";
+    return new Date(`${String(iso).slice(0, 10)}T12:00:00`).toLocaleDateString("en-US", {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  };
+  const startLabel = formatDate(rentStart);
+  const endLabel = formatDate(rentEnd);
+  const periodText =
+    startLabel && endLabel
+      ? ` for ${daysText} (${startLabel} – ${endLabel})`
+      : ` for ${daysText}`;
+
   return notifyUser({
     userId: sellerId,
     title: "New Rental Request",
-    message: "A buyer submitted a rental request. Review and respond from your orders inbox.",
+    message: `A buyer requested a rental${periodText}. Review and respond from your orders inbox.`,
     highlight: productTitle,
     category: "orders",
     iconVariant: "secondary",
@@ -192,11 +209,26 @@ function notifyBuyerMarkedReturn({ sellerId, productTitle, orderId }) {
   return notifyUser({
     userId: sellerId,
     title: "Buyer Marked Item Returned",
-    message: "The buyer marked the rental item as returned. Review and complete the order when ready.",
+    message:
+      "The buyer marked the rental item as returned. Confirm the return, then propose settlement to release escrow.",
     highlight: productTitle,
     category: "orders",
     iconVariant: "primary",
     link: "/sellerProfile?section=orders",
+    meta: orderId ? { orderId: String(orderId) } : undefined,
+  });
+}
+
+function notifySellerConfirmedReturn({ buyerId, productTitle, orderId }) {
+  return notifyUser({
+    userId: buyerId,
+    title: "Seller Confirmed Your Return",
+    message:
+      "The seller confirmed they received your return. They will propose a settlement next for escrow release.",
+    highlight: productTitle,
+    category: "orders",
+    iconVariant: "primary",
+    link: "/profile?section=orders",
     meta: orderId ? { orderId: String(orderId) } : undefined,
   });
 }
@@ -613,8 +645,9 @@ function notifySettlementDisputed({ buyerId, sellerId, productTitle, orderId }) 
   return Promise.all([
     notifyUser({
       userId: buyerId,
-      title: "Settlement Disputed",
-      message: "Your dispute was submitted. An admin will review and set the final escrow split.",
+      title: "Rental Return Disputed",
+      message:
+        "A return/settlement dispute was opened. An admin will contact both parties and decide the escrow split.",
       highlight: productTitle,
       category: "payments",
       iconVariant: "tertiary",
@@ -623,8 +656,8 @@ function notifySettlementDisputed({ buyerId, sellerId, productTitle, orderId }) 
     }),
     notifyUser({
       userId: sellerId,
-      title: "Settlement Disputed",
-      message: "The buyer disputed your settlement proposal. Escrow is frozen until admin resolves it.",
+      title: "Rental Return Disputed",
+      message: "Escrow is frozen until admin mediates and resolves this return dispute.",
       highlight: productTitle,
       category: "payments",
       iconVariant: "primary",
@@ -712,6 +745,7 @@ module.exports = {
   notifyRentalCompleted,
   notifyBuyerConfirmedReceipt,
   notifyBuyerMarkedReturn,
+  notifySellerConfirmedReturn,
   notifyBuyerOrderShipped,
   notifyBuyerReturnInstructions,
   notifyEscrowReleased,

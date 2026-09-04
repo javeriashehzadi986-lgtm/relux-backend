@@ -1,5 +1,5 @@
 const mongoose = require("mongoose");
-const { getFulfillmentLabel, FULFILLMENT, getFulfillmentVariant, isRentalPeriodComplete, getReturnAvailableLabel, buildOrderLogistics, getPaymentLabel } = require("../services/orderStatusService");
+const { getFulfillmentLabel, FULFILLMENT, getFulfillmentVariant, getReturnAvailableLabel, buildOrderLogistics, getPaymentLabel } = require("../services/orderStatusService");
 const { getEscrowLabel } = require("../services/escrowService");
 const { getProductAvailability } = require("../services/productAvailabilityService");
 
@@ -111,6 +111,7 @@ const orderSchema = new mongoose.Schema(
     escrowHeldAt: { type: Date, default: null },
     escrowReleasedAt: { type: Date, default: null },
     returnConfirmedAt: { type: Date, default: null },
+    sellerConfirmedReturnAt: { type: Date, default: null },
     shippedAt: { type: Date, default: null },
     deliveryConfirmedAt: { type: Date, default: null },
     saleEscrowAutoReleaseAt: { type: Date, default: null },
@@ -161,14 +162,16 @@ function formatRentalPeriod(start, end) {
   return `Rental Period: ${format(start)} - ${format(end)}`;
 }
 
-function formatDateLabel(start, end) {
+function formatDateLabel(start, end, rentalDays = 0) {
   if (!start || !end) return "Dates TBD";
   const format = (iso) =>
     new Date(`${iso}T12:00:00`).toLocaleDateString("en-US", {
       month: "short",
       day: "2-digit",
     });
-  return `${format(start)} - ${format(end)}`;
+  const days = Math.max(1, Number(rentalDays) || 0);
+  const daysText = days === 1 ? "1 day" : `${days} days`;
+  return `${daysText} · ${format(start)} – ${format(end)}`;
 }
 
 function embeddedProductFields(doc) {
@@ -265,10 +268,10 @@ function buildRentalBuyerMeta(order, fs, rentalNeedsPay, fulfillmentLabel) {
       { icon: "calendar-check", text: `${order.rentalDays || 1} Days Rental` },
       {
         icon: "check-circle",
-        text: isRentalPeriodComplete(order.rentEnd)
-          ? "Rental period ended — you can mark the item as returned"
-          : getReturnAvailableLabel(order.rentEnd),
-        highlight: isRentalPeriodComplete(order.rentEnd),
+        text: formatRentalPeriod(order.rentStart, order.rentEnd)
+          ? `${formatRentalPeriod(order.rentStart, order.rentEnd)} — mark as returned when you ship it back`
+          : "Mark as returned when you ship the item back",
+        highlight: true,
       },
     ];
   }
@@ -466,13 +469,10 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       this.paymentStatus === "paid" &&
       fs === FULFILLMENT.DELIVERED
     ) {
-      const canReturn = isRentalPeriodComplete(this.rentEnd);
       actions.push({
         id: "mark-returned",
         label: "Mark as Returned",
         variant: "primary",
-        disabled: !canReturn,
-        disabledReason: getReturnAvailableLabel(this.rentEnd),
       });
     } else if (
       !isSale &&
@@ -551,8 +551,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       canMarkReturned:
         !isSale &&
         this.paymentStatus === "paid" &&
-        fs === FULFILLMENT.DELIVERED &&
-        isRentalPeriodComplete(this.rentEnd),
+        fs === FULFILLMENT.DELIVERED,
       returnAvailableLabel: getReturnAvailableLabel(this.rentEnd),
       ...embeddedProductFields(this),
       ...sellerReturnContactFields(this),
@@ -623,7 +622,7 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
     rentalDays: this.rentalDays,
     rentStart: this.rentStart,
     rentEnd: this.rentEnd,
-    dateLabel: formatDateLabel(this.rentStart, this.rentEnd),
+    dateLabel: formatDateLabel(this.rentStart, this.rentEnd, this.rentalDays),
     paymentStatus: this.paymentStatus || "unpaid",
     paymentLabel: getPaymentLabel(this),
     fulfillmentStatus: this.fulfillmentStatus || FULFILLMENT.PROCESSING,
@@ -643,6 +642,7 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
     shippedAt: this.shippedAt || null,
     deliveryConfirmedAt: this.deliveryConfirmedAt || null,
     returnConfirmedAt: this.returnConfirmedAt || null,
+    sellerConfirmedReturnAt: this.sellerConfirmedReturnAt || null,
     saleEscrowAutoReleaseAt: this.saleEscrowAutoReleaseAt || null,
     saleEscrowReleaseReason: this.saleEscrowReleaseReason || "",
     amountPkr: this.amountPkr || 0,
@@ -686,23 +686,45 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
         escrowPendingRelease
       ) {
         const settlementStatus = this.escrowSettlementStatus || "none";
-        if (settlementStatus === "none") {
+        const sellerConfirmedReturn = Boolean(this.sellerConfirmedReturnAt);
+
+        if (settlementStatus === "disputed") {
           actions.push({
-            id: "propose-settlement",
-            label: "Propose Settlement",
-            variant: "primary",
-          });
-        } else if (settlementStatus === "proposed") {
-          actions.push({
-            id: "details",
-            label: "Awaiting Buyer Review",
+            id: "dispute-pending",
+            label: "Return Dispute Under Review",
             variant: "outline",
             disabled: true,
           });
-        } else if (settlementStatus === "disputed") {
+        } else if (!sellerConfirmedReturn) {
+          actions.push(
+            {
+              id: "confirm-return",
+              label: "Confirm Returned",
+              variant: "primary",
+            },
+            {
+              id: "dispute-return",
+              label: "Report Return Issue",
+              variant: "outline",
+            },
+          );
+        } else if (settlementStatus === "none") {
+          actions.push(
+            {
+              id: "propose-settlement",
+              label: "Propose Settlement",
+              variant: "primary",
+            },
+            {
+              id: "dispute-return",
+              label: "Report Return Issue",
+              variant: "outline",
+            },
+          );
+        } else if (settlementStatus === "proposed") {
           actions.push({
-            id: "details",
-            label: "Dispute — Admin Review",
+            id: "awaiting-buyer",
+            label: "Awaiting Buyer Review",
             variant: "outline",
             disabled: true,
           });
@@ -722,6 +744,26 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
         actions.push({
           id: "details",
           label: "Awaiting Buyer Confirmation",
+          variant: "outline",
+          disabled: true,
+        });
+      } else if (
+        this.type === "rental" &&
+        fs === FULFILLMENT.SHIPPED
+      ) {
+        actions.push({
+          id: "awaiting-buyer",
+          label: "Awaiting Buyer Receipt",
+          variant: "outline",
+          disabled: true,
+        });
+      } else if (
+        this.type === "rental" &&
+        fs === FULFILLMENT.DELIVERED
+      ) {
+        actions.push({
+          id: "awaiting-buyer",
+          label: "Awaiting Buyer Return",
           variant: "outline",
           disabled: true,
         });

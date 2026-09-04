@@ -41,10 +41,17 @@ async function loadRentalOrderForBuyer(orderId, buyerId) {
   }).populate("productId", "title itemPrice rentPrice");
 }
 
-function assertReturnMarked(order) {
+function assertBuyerMarkedReturn(order) {
   const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
   if (fs !== FULFILLMENT.RETURNED) {
     throw new Error("Buyer must mark the item as returned before settlement");
+  }
+}
+
+function assertReturnMarked(order) {
+  assertBuyerMarkedReturn(order);
+  if (!order.sellerConfirmedReturnAt) {
+    throw new Error("Confirm the return first, then propose settlement");
   }
 }
 
@@ -415,10 +422,104 @@ async function adminResolveSettlement(req, res) {
   }
 }
 
+async function disputeRentalReturn(req, res) {
+  try {
+    const order = await loadRentalOrderForSeller(req.params.id, req.user._id);
+
+    if (!order) {
+      return res.status(404).json({ message: "Rental order not found" });
+    }
+
+    ensurePaid(order);
+    assertBuyerMarkedReturn(order);
+    assertEscrowHeld(order);
+
+    if (order.escrowSettlementStatus === "disputed") {
+      return res.status(400).json({ message: "A return dispute is already open for this order" });
+    }
+
+    if (["proposed", "accepted", "admin_settled"].includes(order.escrowSettlementStatus || "none")) {
+      return res.status(400).json({
+        message:
+          order.escrowSettlementStatus === "proposed"
+            ? "A settlement is already awaiting the buyer. Wait for their response or ask them to dispute it."
+            : "This rental escrow is already settled",
+      });
+    }
+
+    const { disputeReason } = req.body;
+    if (!disputeReason?.trim()) {
+      return res.status(400).json({
+        message:
+          "Please describe the return issue (damage, late return, missing item, not returned, etc.)",
+      });
+    }
+
+    order.disputeReason = disputeReason.trim();
+    order.escrowSettlementStatus = "disputed";
+    order.settlementDisputedAt = new Date();
+    if (!order.sellerConfirmedReturnAt) {
+      order.sellerConfirmedReturnAt = new Date();
+    }
+    await order.save();
+
+    const product = await Product.findById(order.productId).select("title");
+    const buyerUser = await User.findById(order.buyerId).select("name");
+
+    let report = null;
+    if (!order.disputeReportId) {
+      let reportId = `RH-${Math.floor(1000 + Math.random() * 9000)}`;
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const exists = await Report.exists({ reportId });
+        if (!exists) break;
+        reportId = `RH-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+
+      report = await Report.create({
+        reportId,
+        reporterId: req.user._id,
+        reporterRole: "seller",
+        reporterName: req.user.name || "",
+        issueType: "Return",
+        subject: `Rental return dispute — ${product?.title || "Rental order"}`,
+        message: disputeReason.trim(),
+        images: order.settlementEvidence || [],
+        orderId: order._id,
+        productId: order.productId,
+        involvedSellerId: order.sellerId,
+        involvedBuyerId: order.buyerId,
+        productTitle: product?.title || "",
+        sellerName: req.user.name || "",
+        buyerName: buyerUser?.name || "",
+        status: "open",
+        disputeStage: "none",
+      });
+      order.disputeReportId = report._id;
+      await order.save();
+    }
+
+    notifySettlementDisputed({
+      buyerId: order.buyerId,
+      sellerId: order.sellerId,
+      productTitle: product?.title ?? "rental item",
+      orderId: order._id,
+    });
+
+    res.json({
+      message: "Return dispute submitted — escrow is held until admin resolves it",
+      order: order.toSellerJSON(),
+      reportId: report?._id?.toString?.() || order.disputeReportId?.toString?.(),
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || getErrorMessage(error) });
+  }
+}
+
 module.exports = {
   getSettlement,
   proposeSettlement,
   acceptSettlement,
   disputeSettlement,
+  disputeRentalReturn,
   adminResolveSettlement,
 };

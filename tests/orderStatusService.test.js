@@ -68,13 +68,20 @@ describe("Order Status Service — Chapter 5: Order Fulfillment", () => {
       const rentEnd = past.toISOString().slice(0, 10);
       expect(isRentalPeriodComplete(rentEnd)).toBe(true);
     });
+
+    it("TC-OS-06b: return available on rent end date", () => {
+      const today = new Date();
+      const rentEnd = today.toISOString().slice(0, 10);
+      expect(isRentalPeriodComplete(rentEnd)).toBe(true);
+    });
   });
 
   describe("getReturnAvailableLabel", () => {
-    it("TC-OS-07: shows available-from date after rental ends", () => {
+    it("TC-OS-07: shows available-from date on rental end day", () => {
       const label = getReturnAvailableLabel("2026-01-03");
       expect(label).toMatch(/Available from/);
       expect(label).toMatch(/Jan/);
+      expect(label).toMatch(/3/);
     });
   });
 

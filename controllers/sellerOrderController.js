@@ -6,6 +6,7 @@ const {
   notifyBookingRejected,
   notifyRentalCompleted,
   notifyBuyerOrderShipped,
+  notifySellerConfirmedReturn,
 } = require("../services/notificationService");
 const {
   FULFILLMENT,
@@ -237,10 +238,58 @@ async function shipOrder(req, res) {
   }
 }
 
+async function confirmReturnReceived(req, res) {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      sellerId: req.user._id,
+      type: "rental",
+    }).populate("productId", "title");
+
+    if (!order) {
+      return res.status(404).json({ message: "Rental order not found" });
+    }
+    if (order.status !== "approved") {
+      return res.status(400).json({ message: "Only active rentals can confirm a return" });
+    }
+    ensurePaid(order);
+
+    const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
+    if (fs !== FULFILLMENT.RETURNED) {
+      return res.status(400).json({
+        message: "Buyer must mark the item as returned before you can confirm it",
+      });
+    }
+    if (order.sellerConfirmedReturnAt) {
+      return res.json({
+        message: "Return already confirmed",
+        order: order.toSellerJSON(),
+      });
+    }
+
+    order.sellerConfirmedReturnAt = new Date();
+    await order.save();
+
+    notifySellerConfirmedReturn({
+      buyerId: order.buyerId,
+      productTitle: order.productId?.title ?? "your rental item",
+      orderId: order._id,
+    });
+
+    res.json({
+      message: "Return confirmed. Propose settlement to release escrow.",
+      order: order.toSellerJSON(),
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || getErrorMessage(error) });
+  }
+}
+
 module.exports = {
   getMySellerOrders,
   approveOrder,
   rejectOrder,
   completeOrder,
   shipOrder,
+  confirmReturnReceived,
 };
