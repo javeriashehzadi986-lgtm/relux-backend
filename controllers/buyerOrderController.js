@@ -62,6 +62,57 @@ async function createRentalRequest(req, res) {
     }
 
     const rentalDays = getRentalDays(rentStart, rentEnd);
+
+    // Approved + unpaid rentals must be cancelled (or reused) before a new request.
+    const activeApproved = await Order.findOne({
+      buyerId: req.user._id,
+      productId: product._id,
+      type: "rental",
+      status: "approved",
+      paymentStatus: { $ne: "paid" },
+      removedByBuyer: false,
+    }).sort({ updatedAt: -1 });
+
+    if (activeApproved) {
+      // Reuse: update dates and send back for seller approval.
+      activeApproved.size = size?.trim() || activeApproved.size || "M";
+      activeApproved.rentStart = rentStart;
+      activeApproved.rentEnd = rentEnd;
+      activeApproved.rentalDays = rentalDays;
+      activeApproved.status = "pending";
+      activeApproved.buyerName = req.user.name;
+      activeApproved.removedByBuyer = false;
+      await activeApproved.save();
+
+      // Close any duplicate unpaid rental rows for the same product.
+      await Order.updateMany(
+        {
+          _id: { $ne: activeApproved._id },
+          buyerId: req.user._id,
+          productId: product._id,
+          type: "rental",
+          status: { $in: ["pending", "approved"] },
+          paymentStatus: { $ne: "paid" },
+          removedByBuyer: false,
+        },
+        { $set: { status: "cancelled" } },
+      );
+
+      notifyRentalRequest({
+        sellerId: product.sellerId,
+        productTitle: product.title,
+        orderId: activeApproved._id,
+        rentalDays,
+        rentStart,
+        rentEnd,
+      });
+
+      return res.status(201).json({
+        message: "Rental request updated with new dates — waiting for seller approval",
+        order: activeApproved.toBuyerJSON(),
+      });
+    }
+
     const existing = await Order.findOne({
       buyerId: req.user._id,
       productId: product._id,
@@ -175,8 +226,18 @@ async function cancelMyOrder(req, res) {
     if (!order) {
       return res.status(404).json({ message: "Order not found" });
     }
-    if (order.status !== "pending") {
-      return res.status(400).json({ message: "Only pending requests can be cancelled" });
+
+    const isPending = order.status === "pending";
+    const isApprovedUnpaidRental =
+      order.type === "rental" &&
+      order.status === "approved" &&
+      order.paymentStatus !== "paid";
+
+    if (!isPending && !isApprovedUnpaidRental) {
+      return res.status(400).json({
+        message:
+          "Only pending requests or approved rentals that are not paid yet can be cancelled",
+      });
     }
 
     order.status = "cancelled";
@@ -247,12 +308,13 @@ async function confirmReceivedOrder(req, res) {
     order.fulfillmentStatus = FULFILLMENT.DELIVERED;
     order.deliveryConfirmedAt = new Date();
 
+    if (order.escrowSettlementStatus === "disputed") {
+      return res.status(400).json({
+        message: "Escrow is frozen while admin reviews your delivery dispute",
+      });
+    }
+
     if (order.type === "sale" && order.escrowStatus === "held") {
-      if (order.escrowSettlementStatus === "disputed") {
-        return res.status(400).json({
-          message: "Escrow is frozen while admin reviews your delivery dispute",
-        });
-      }
       await order.save();
       const result = await releaseSaleEscrow(order, {}, "buyer_confirmed");
       const product = await Product.findById(order.productId).select("title");

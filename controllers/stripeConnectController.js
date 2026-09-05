@@ -220,6 +220,7 @@ async function getSellerPayoutOverview(req, res) {
         amountPkr: Number(order.sellerPayoutPkr) || 0,
         amountLabel: formatPkr(order.sellerPayoutPkr),
         transferId: order.stripeTransferId || "",
+        payoutStatus: order.sellerPayoutStatus || "none",
         releasedAt: order.escrowReleasedAt || order.updatedAt || null,
         type: order.type === "sale" ? "sale" : "rental",
       };

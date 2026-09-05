@@ -59,60 +59,89 @@ async function transferSellerPayout({ order, sellerId, amountPkr }) {
       skipped: true,
       demoMode: true,
       reason: "payouts_not_enabled",
-      message: "Seller Stripe account is not ready for payouts — payout recorded only",
-    };
-  }
-
-  if (!order.stripePaymentIntentId) {
-    return {
-      skipped: true,
-      demoMode: true,
-      reason: "no_payment_intent",
-      message: "No Stripe payment on file — payout recorded only",
+      message: "Seller Stripe account is not ready for payouts — finish Connect onboarding",
     };
   }
 
   const stripe = getStripe();
   const currency = getCurrency();
   const amount = toStripeUnitAmount(payoutPkr);
-  const chargeId = await getChargeIdForPaymentIntent(order.stripePaymentIntentId);
+  const chargeId = order.stripePaymentIntentId
+    ? await getChargeIdForPaymentIntent(order.stripePaymentIntentId)
+    : null;
 
-  const params = {
-    amount,
-    currency,
-    destination: verification.stripeAccountId,
-    description: `Relux Hub payout — order ${order.orderId || order._id}`,
-    metadata: {
-      orderId: order._id.toString(),
-      orderPublicId: order.orderId || "",
-      sellerId: sellerId.toString(),
-      sellerPayoutPkr: String(payoutPkr),
-      orderType: order.type || "",
-    },
+  const buildParams = (useSourceTransaction) => {
+    const params = {
+      amount,
+      currency,
+      destination: verification.stripeAccountId,
+      description: `Relux Hub payout — order ${order.orderId || order._id}`,
+      metadata: {
+        orderId: order._id.toString(),
+        orderPublicId: order.orderId || "",
+        sellerId: sellerId.toString(),
+        sellerPayoutPkr: String(payoutPkr),
+        orderType: order.type || "",
+      },
+    };
+    if (useSourceTransaction && chargeId) {
+      params.source_transaction = chargeId;
+    }
+    return params;
   };
 
-  if (chargeId) {
-    params.source_transaction = chargeId;
-  }
+  const strict = String(process.env.STRIPE_CONNECT_STRICT || "").toLowerCase() === "true";
 
   try {
-    const transfer = await stripe.transfers.create(params);
+    const transfer = await stripe.transfers.create(buildParams(Boolean(chargeId)));
     return {
       transferId: transfer.id,
       demoMode: false,
       skipped: false,
     };
-  } catch (error) {
-    const strict = String(process.env.STRIPE_CONNECT_STRICT || "").toLowerCase() === "true";
-    if (strict) {
-      throw new Error(error.message || "Stripe could not transfer payout to seller");
+  } catch (firstError) {
+    // source_transaction can fail (cross-currency / charge state). Retry from platform balance.
+    if (chargeId) {
+      try {
+        const transfer = await stripe.transfers.create(buildParams(false));
+        return {
+          transferId: transfer.id,
+          demoMode: false,
+          skipped: false,
+          retriedWithoutSource: true,
+        };
+      } catch (retryError) {
+        if (strict) {
+          throw new Error(retryError.message || "Stripe could not transfer payout to seller");
+        }
+        console.error(
+          "[stripe connect transfer retry]",
+          retryError.message || retryError,
+          "| first:",
+          firstError.message || firstError,
+        );
+        return {
+          skipped: true,
+          demoMode: false,
+          reason: "transfer_failed",
+          message: retryError.message || firstError.message || "Transfer failed",
+        };
+      }
     }
-    console.error("[stripe connect transfer]", error.message || error);
+
+    if (strict) {
+      throw new Error(firstError.message || "Stripe could not transfer payout to seller");
+    }
+    console.error("[stripe connect transfer]", firstError.message || firstError);
     return {
       skipped: true,
-      demoMode: true,
-      reason: "transfer_failed",
-      message: error.message || "Transfer failed — payout recorded only",
+      demoMode: !order.stripePaymentIntentId,
+      reason: order.stripePaymentIntentId ? "transfer_failed" : "no_payment_intent",
+      message:
+        firstError.message ||
+        (order.stripePaymentIntentId
+          ? "Transfer failed"
+          : "No Stripe payment on file — payout recorded only"),
     };
   }
 }

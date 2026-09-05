@@ -110,7 +110,13 @@ describe("Chapter 5 — Unit Testing (UT)", () => {
           title: "Silk Gown",
           listingType: "sale",
           mainCategory: "Female",
-          mainImage: "https://example.com/img.jpg",
+          mainImage: "https://example.com/img1.jpg",
+          gallery: [
+            "https://example.com/img1.jpg",
+            "https://example.com/img2.jpg",
+            "https://example.com/img3.jpg",
+            "https://example.com/img4.jpg",
+          ],
           salePrice: "50000",
         },
       });

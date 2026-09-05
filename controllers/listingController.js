@@ -34,6 +34,12 @@ async function validateListingBody(body) {
     return "Select a valid main category from the list";
   }
 
+  const galleryImages = Array.isArray(body.gallery)
+    ? body.gallery.filter((img) => typeof img === "string" && img.trim())
+    : [];
+  if (galleryImages.length < 4) {
+    return "Please add at least 4 pictures from different angles";
+  }
   if (!mainImage?.trim()) {
     return "At least one product image is required";
   }

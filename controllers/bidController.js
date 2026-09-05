@@ -132,9 +132,7 @@ async function buildAuctionSummary(product, userId) {
       .lean();
 
     const isWinning = Boolean(
-      userHighest &&
-        highestBid &&
-        String(userHighest._id) === String(highestBid._id),
+      highestBid && String(highestBid.userId) === String(userId),
     );
     const hasWon = Boolean(auctionEnded && isWinning);
 
@@ -441,6 +439,13 @@ async function getMyBids(req, res) {
         products.map((product) => buildMyBidCard(product, req.user._id)),
       )
     ).filter(Boolean);
+
+    const statusRank = { winning: 0, outbid: 1, won: 2, expired: 3, active: 4 };
+    cards.sort((a, b) => {
+      const rankDiff = (statusRank[a.status] ?? 9) - (statusRank[b.status] ?? 9);
+      if (rankDiff !== 0) return rankDiff;
+      return String(b.id).localeCompare(String(a.id));
+    });
 
     res.json({ bids: cards });
   } catch (error) {

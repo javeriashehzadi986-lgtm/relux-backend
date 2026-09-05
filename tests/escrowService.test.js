@@ -28,6 +28,24 @@ describe("Escrow Service — Chapter 5: Rental Payment Hold & Release", () => {
       expect(result.depositPkr).toBe(50000);
       expect(result.rentalChargePkr).toBe(6000);
       expect(result.refundAmountPkr).toBe(44000);
+      expect(result.sellerPayoutPkr).toBe(6000);
+    });
+
+    it("TC-ES-02b: seller payout includes delivery fee and deposit excludes it", () => {
+      const result = calculateRentalEscrow(
+        {
+          amountPkr: 50300,
+          itemAmountPkr: 50000,
+          deliveryChargesPkr: 300,
+          rentalDays: 3,
+        },
+        { itemPrice: "50000", rentPrice: "2000" },
+      );
+      expect(result.depositPkr).toBe(50000);
+      expect(result.deliveryChargesPkr).toBe(300);
+      expect(result.rentalChargePkr).toBe(6000);
+      expect(result.sellerPayoutPkr).toBe(6300);
+      expect(result.refundAmountPkr).toBe(44000);
     });
 
     it("TC-ES-03: refund is zero when rental exceeds deposit", () => {

@@ -360,8 +360,9 @@ async function createRentalCheckout(req, res) {
     const deposit = parseAmount(product.itemPrice);
     const rentTotal =
       parseAmount(product.rentPrice) * Math.max(1, Number(order.rentalDays) || 1);
-    const totalPkr =
-      order.amountPkr > 0 ? order.amountPkr : deposit > 0 ? deposit : rentTotal;
+    const itemAmountPkr = deposit > 0 ? deposit : rentTotal;
+    const deliveryCharges = DEFAULT_DELIVERY_PKR;
+    const totalPkr = itemAmountPkr + deliveryCharges;
 
     if (totalPkr <= 0) {
       return res.status(400).json({ message: "This rental has no payable amount" });
@@ -380,14 +381,14 @@ async function createRentalCheckout(req, res) {
     }
 
     order.amountPkr = totalPkr;
-    order.itemAmountPkr = totalPkr;
+    order.itemAmountPkr = itemAmountPkr;
+    order.deliveryChargesPkr = deliveryCharges;
     order.paymentStatus = "pending";
     order.paymentProvider = "stripe";
     await order.save();
 
     const stripe = getStripe();
     const currency = getCurrency();
-    const unitAmount = toStripeUnitAmount(totalPkr);
     const frontend = getFrontendUrl();
     const imageUrl =
       product.mainImage &&
@@ -396,29 +397,46 @@ async function createRentalCheckout(req, res) {
         ? product.mainImage
         : undefined;
 
+    const lineItems = [
+      {
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: toStripeUnitAmount(itemAmountPkr),
+          product_data: {
+            name: `Rental deposit (escrow) — ${product.title || "Relux Hub"}`,
+            description: `Security deposit held in escrow until return (PKR ${itemAmountPkr.toLocaleString("en-PK")})`,
+            images: imageUrl ? [imageUrl] : undefined,
+          },
+        },
+      },
+    ];
+
+    if (deliveryCharges > 0) {
+      lineItems.push({
+        quantity: 1,
+        price_data: {
+          currency,
+          unit_amount: toStripeUnitAmount(deliveryCharges),
+          product_data: {
+            name: "Delivery charges",
+            description: `Flat delivery fee within Pakistan: PKR ${deliveryCharges.toLocaleString("en-PK")}`,
+          },
+        },
+      });
+    }
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: req.user.email || undefined,
-      line_items: [
-        {
-          quantity: 1,
-          price_data: {
-            currency,
-            unit_amount: unitAmount,
-            product_data: {
-              name: `Rental deposit (escrow) — ${product.title || "Relux Hub"}`,
-              description: `Security deposit held in escrow until return (PKR ${totalPkr.toLocaleString("en-PK")})`,
-              images: imageUrl ? [imageUrl] : undefined,
-            },
-          },
-        },
-      ],
+      line_items: lineItems,
       metadata: {
         orderId: order._id.toString(),
         orderPublicId: order.orderId,
         productId: product._id.toString(),
         buyerId: req.user._id.toString(),
         orderType: "rental",
+        deliveryPkr: String(deliveryCharges),
       },
       success_url: `${frontend}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${frontend}/payment/cancel?order_id=${order._id}`,
@@ -426,7 +444,9 @@ async function createRentalCheckout(req, res) {
 
     order.stripeSessionId = session.id;
     order.currency = currency;
-    order.stripeAmount = unitAmount;
+    order.stripeAmount =
+      toStripeUnitAmount(itemAmountPkr) +
+      (deliveryCharges > 0 ? toStripeUnitAmount(deliveryCharges) : 0);
     await order.save();
 
     res.status(201).json({
@@ -533,8 +553,10 @@ async function markOrderPaidFromSession(session, orderDoc) {
   const deliveryPart = order.deliveryChargesPkr || 0;
   const totalPart = order.amountPkr || 0;
   const amountLabel =
-    order.type === "sale" && deliveryPart > 0
-      ? `PKR ${totalPart.toLocaleString("en-PK")} (winning bid PKR ${bidPart.toLocaleString("en-PK")} + delivery PKR ${deliveryPart.toLocaleString("en-PK")})`
+    deliveryPart > 0
+      ? `PKR ${totalPart.toLocaleString("en-PK")} (${
+          order.type === "sale" ? "winning bid" : "deposit"
+        } PKR ${bidPart.toLocaleString("en-PK")} + delivery PKR ${deliveryPart.toLocaleString("en-PK")})`
       : `PKR ${totalPart.toLocaleString("en-PK")}`;
 
   notifyPaymentReceived({

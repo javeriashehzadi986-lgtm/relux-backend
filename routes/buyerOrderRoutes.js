@@ -13,6 +13,7 @@ const {
   getSettlement,
   acceptSettlement,
   disputeSettlement,
+  disputeRentalDelivery,
 } = require("../controllers/settlementController");
 const {
   getSaleEscrow,
@@ -32,6 +33,7 @@ router.patch("/:id/mark-returned", markReturnedOrder);
 router.get("/:id/settlement", getSettlement);
 router.post("/:id/settlement/accept", acceptSettlement);
 router.post("/:id/settlement/dispute", disputeSettlement);
+router.post("/:id/rental-delivery/dispute", disputeRentalDelivery);
 router.get("/:id/sale-escrow", getSaleEscrow);
 router.post("/:id/sale-escrow/dispute", disputeSaleDelivery);
 router.delete("/:id", removeMyOrder);

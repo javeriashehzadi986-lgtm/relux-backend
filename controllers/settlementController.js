@@ -12,6 +12,7 @@ const {
 const {
   notifyEscrowReleased,
   notifySettlementDisputed,
+  notifySaleDeliveryDisputed,
 } = require("../services/notificationService");
 
 function getErrorMessage(error) {
@@ -106,6 +107,97 @@ async function disputeSettlement(req, res) {
     message:
       "Buyer settlement disputes are no longer used. Return issues are reported by the seller for admin review.",
   });
+}
+
+async function disputeRentalDelivery(req, res) {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      buyerId: req.user._id,
+      type: "rental",
+      removedByBuyer: false,
+    }).populate("productId", "title itemPrice rentPrice");
+
+    if (!order) {
+      return res.status(404).json({ message: "Rental order not found" });
+    }
+
+    ensurePaid(order);
+    assertEscrowHeld(order);
+
+    const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
+    if (fs !== FULFILLMENT.SHIPPED) {
+      return res.status(400).json({
+        message: "You can only dispute delivery after the seller marks the order as shipped",
+      });
+    }
+
+    if (order.escrowSettlementStatus === "disputed") {
+      return res.status(400).json({ message: "A delivery dispute is already open for this order" });
+    }
+
+    const { disputeReason } = req.body;
+    if (!disputeReason?.trim()) {
+      return res.status(400).json({
+        message: "Please describe the delivery issue (wrong item, not received, etc.)",
+      });
+    }
+
+    order.disputeReason = disputeReason.trim();
+    order.escrowSettlementStatus = "disputed";
+    order.settlementDisputedAt = new Date();
+    await order.save();
+
+    const product = order.productId;
+    const sellerUser = await User.findById(order.sellerId).select("name");
+
+    let report = null;
+    if (!order.disputeReportId) {
+      let reportId = `RH-${Math.floor(1000 + Math.random() * 9000)}`;
+      for (let attempt = 0; attempt < 8; attempt += 1) {
+        const exists = await Report.exists({ reportId });
+        if (!exists) break;
+        reportId = `RH-${Math.floor(1000 + Math.random() * 9000)}`;
+      }
+
+      report = await Report.create({
+        reportId,
+        reporterId: req.user._id,
+        reporterRole: "buyer",
+        reporterName: req.user.name || "",
+        issueType: "Order",
+        subject: `Rental delivery dispute — ${product?.title || "Rental order"}`,
+        message: disputeReason.trim(),
+        images: order.settlementEvidence || [],
+        orderId: order._id,
+        productId: order.productId?._id || order.productId,
+        involvedSellerId: order.sellerId,
+        involvedBuyerId: order.buyerId,
+        productTitle: product?.title || "",
+        sellerName: sellerUser?.name || "",
+        buyerName: req.user.name || "",
+        status: "open",
+        disputeStage: "none",
+      });
+      order.disputeReportId = report._id;
+      await order.save();
+    }
+
+    await notifySaleDeliveryDisputed({
+      buyerId: order.buyerId,
+      sellerId: order.sellerId,
+      productTitle: product?.title ?? "your rental",
+      orderId: order._id,
+    });
+
+    res.json({
+      message: "Delivery dispute submitted — payment is held until admin resolves it",
+      order: order.toBuyerJSON(),
+      reportId: report?._id?.toString?.() || order.disputeReportId?.toString?.(),
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || getErrorMessage(error) });
+  }
 }
 
 async function disputeRentalReturn(req, res) {
@@ -217,8 +309,11 @@ async function adminResolveSettlement(req, res) {
 
     assertEscrowHeld(order);
 
-    // Seller must confirm the returned item was received before admin can release escrow.
-    if (!order.returnConfirmedAt) {
+    // Return-stage disputes wait for seller return confirmation.
+    // Delivery-stage disputes (shipped, not returned) can be resolved without it.
+    const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
+    const isReturnStageDispute = fs === FULFILLMENT.RETURNED;
+    if (isReturnStageDispute && !order.returnConfirmedAt) {
       return res.status(400).json({
         message:
           "Seller has not confirmed receiving the returned product yet. Wait for return confirmation before releasing escrow.",
@@ -303,6 +398,7 @@ module.exports = {
   proposeSettlement,
   acceptSettlement,
   disputeSettlement,
+  disputeRentalDelivery,
   disputeRentalReturn,
   adminResolveSettlement,
 };

@@ -295,6 +295,8 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
     paymentStatus: this.paymentStatus || "unpaid",
     paymentLabel: getPaymentLabel(this),
     amountPkr: this.amountPkr || 0,
+    itemAmountPkr: this.itemAmountPkr || 0,
+    deliveryChargesPkr: this.deliveryChargesPkr || 0,
     paidAt: this.paidAt,
     fulfillmentStatus: this.fulfillmentStatus || FULFILLMENT.PROCESSING,
     fulfillmentLabel: getFulfillmentLabel(this),
@@ -436,15 +438,20 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
         variant: "primary",
         link: true,
       });
+      actions.push({
+        id: "cancel",
+        label: "Cancel Request",
+        variant: "danger",
+      });
     } else if (this.paymentStatus === "paid" && fs === FULFILLMENT.SHIPPED) {
-      if (isSale && this.escrowSettlementStatus === "disputed") {
+      if (this.escrowSettlementStatus === "disputed") {
         actions.push({
           id: "dispute-pending",
           label: "Delivery Dispute Under Review",
           variant: "outline",
           disabled: true,
         });
-      } else if (isSale && this.escrowStatus === "held") {
+      } else if (this.escrowStatus === "held") {
         actions.push(
           {
             id: "confirm-received",

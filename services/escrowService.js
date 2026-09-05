@@ -10,7 +10,17 @@ function parseAmount(value) {
 }
 
 function calculateRentalEscrow(order, product, overrides = {}) {
-  const deposit = order.amountPkr > 0 ? order.amountPkr : parseAmount(product?.itemPrice);
+  const deliveryChargesPkr = Math.max(0, Math.round(Number(order.deliveryChargesPkr) || 0));
+  let deposit = Math.max(0, Math.round(Number(order.itemAmountPkr) || 0));
+  if (!deposit) {
+    const totalPaid = Math.max(0, Math.round(Number(order.amountPkr) || 0));
+    deposit =
+      totalPaid > deliveryChargesPkr ? totalPaid - deliveryChargesPkr : totalPaid || 0;
+  }
+  if (!deposit) {
+    deposit = parseAmount(product?.itemPrice);
+  }
+
   const dailyRate = parseAmount(product?.rentPrice);
   const days = Math.max(1, Number(order.rentalDays) || 1);
 
@@ -32,11 +42,13 @@ function calculateRentalEscrow(order, product, overrides = {}) {
   const totalDeductionsPkr = rentalChargePkr + damageDeductionPkr + lateFeePkr;
   const cappedDeductions = Math.min(deposit, totalDeductionsPkr);
   const refundAmountPkr = Math.max(0, Math.round(deposit - cappedDeductions));
-  const sellerPayoutPkr = cappedDeductions;
+  // Delivery was paid by buyer at checkout — release it to the seller with rent/damage.
+  const sellerPayoutPkr = cappedDeductions + deliveryChargesPkr;
   const additionalChargePkr = Math.max(0, totalDeductionsPkr - deposit);
 
   return {
     depositPkr: deposit,
+    deliveryChargesPkr,
     rentalChargePkr,
     damageDeductionPkr,
     lateFeePkr,
@@ -263,11 +275,19 @@ async function processSellerPayoutTransfer(order, sellerPayoutPkr) {
   if (result.transferId) {
     order.stripeTransferId = result.transferId;
     order.sellerPayoutStatus = "transferred";
-    return { stripeTransferId: result.transferId, demoMode: false, transferSkipped: false };
+    return {
+      stripeTransferId: result.transferId,
+      demoMode: false,
+      transferSkipped: false,
+    };
   }
 
   if (result.skipped) {
-    order.sellerPayoutStatus = sellerPayoutPkr > 0 ? "ledger_only" : "none";
+    if (result.reason === "transfer_failed") {
+      order.sellerPayoutStatus = "failed";
+    } else {
+      order.sellerPayoutStatus = sellerPayoutPkr > 0 ? "ledger_only" : "none";
+    }
     return {
       stripeTransferId: "",
       demoMode: Boolean(result.demoMode),
@@ -328,6 +348,8 @@ async function releaseRentalEscrow(order, overrides = {}) {
   let stripeTransferId = "";
   let demoMode = false;
   let transferSkipped = false;
+  let transferSkipReason = "";
+  let transferMessage = "";
 
   try {
     if (breakdown.refundAmountPkr > 0) {
@@ -353,14 +375,23 @@ async function releaseRentalEscrow(order, overrides = {}) {
       const transferResult = await processSellerPayoutTransfer(order, breakdown.sellerPayoutPkr);
       stripeTransferId = transferResult.stripeTransferId;
       demoMode = demoMode || transferResult.demoMode;
-      transferSkipped = transferResult.transferSkipped;
+      transferSkipped = Boolean(transferResult.transferSkipped);
+      transferSkipReason = transferResult.transferSkipReason || "";
+      transferMessage = transferResult.transferMessage || "";
     }
 
     order.escrowStatus = "released";
     order.escrowReleasedAt = new Date();
     order.escrowSettlementStatus = order.escrowSettlementStatus || "accepted";
     await order.save();
-    await finalizeOrderAfterEscrowRelease(order);
+    try {
+      await finalizeOrderAfterEscrowRelease(order);
+    } catch (finalizeError) {
+      console.error(
+        "[escrow finalize after rental release]",
+        finalizeError.message || finalizeError,
+      );
+    }
   } catch (error) {
     order.escrowStatus = "failed";
     order.sellerPayoutStatus = "failed";
@@ -376,6 +407,8 @@ async function releaseRentalEscrow(order, overrides = {}) {
     stripeTransferId,
     demoMode,
     transferSkipped,
+    transferSkipReason,
+    transferMessage,
   };
 }
 

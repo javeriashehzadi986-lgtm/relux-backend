@@ -67,19 +67,23 @@ async function approveOrder(req, res) {
     const parseAmount = (value) =>
       Number(String(value ?? "").replace(/[^\d.]/g, "")) || 0;
 
+const DEFAULT_DELIVERY_PKR = 300;
+
     const deposit = parseAmount(product?.itemPrice);
     const rentTotal =
       parseAmount(product?.rentPrice) * Math.max(1, Number(order.rentalDays) || 1);
     // Charge security deposit (matches rental page “Paid Today”); fall back to rent total
-    const amountPkr = deposit > 0 ? deposit : rentTotal;
+    const itemAmountPkr = deposit > 0 ? deposit : rentTotal;
+    const deliveryChargesPkr = DEFAULT_DELIVERY_PKR;
+    const amountPkr = itemAmountPkr + deliveryChargesPkr;
 
     order.status = "approved";
     if (order.type === "rental") {
       order.paymentStatus = "pending";
       order.paymentProvider = "stripe";
       order.amountPkr = amountPkr;
-      order.itemAmountPkr = amountPkr;
-      order.deliveryChargesPkr = 0;
+      order.itemAmountPkr = itemAmountPkr;
+      order.deliveryChargesPkr = deliveryChargesPkr;
     }
     await order.save();
 
@@ -310,12 +314,28 @@ async function confirmReturnReceived(req, res) {
       transferSent: Boolean(result.stripeTransferId),
     });
 
+    let message =
+      result.refundAmountPkr > 0
+        ? `Return confirmed — escrow released. ${formatPkr(result.refundAmountPkr)} refunded to buyer.`
+        : "Return confirmed — escrow released to seller.";
+
+    if (result.sellerPayoutPkr > 0 && result.stripeTransferId) {
+      message += ` ${formatPkr(result.sellerPayoutPkr)} sent to your Stripe Connect account.`;
+    } else if (result.sellerPayoutPkr > 0 && result.transferSkipped) {
+      message += ` Seller payout ${formatPkr(result.sellerPayoutPkr)} was recorded but not transferred yet${
+        result.transferMessage ? `: ${result.transferMessage}` : "."
+      }`;
+    }
+
     res.json({
-      message:
-        result.refundAmountPkr > 0
-          ? `Return confirmed — escrow released. ${formatPkr(result.refundAmountPkr)} refunded to buyer.`
-          : "Return confirmed — escrow released to seller.",
+      message,
       order: result.order.toSellerJSON(),
+      payout: {
+        sellerPayoutPkr: result.sellerPayoutPkr,
+        transferId: result.stripeTransferId || "",
+        transferSkipped: Boolean(result.transferSkipped),
+        transferMessage: result.transferMessage || "",
+      },
     });
   } catch (error) {
     res.status(400).json({ message: error.message || getErrorMessage(error) });
