@@ -203,6 +203,7 @@ describe("Settlement Flow — propose, accept, dispute, admin resolve", () => {
       rentalChargePkr: 15000,
       damageDeductionPkr: 8000,
       disputeReportId: new mongoose.Types.ObjectId(),
+      returnConfirmedAt: new Date(),
     });
     Order.findById = jest.fn().mockReturnValue(mockFindByIdWithPopulate(order));
     Report.findById = jest.fn().mockResolvedValue({

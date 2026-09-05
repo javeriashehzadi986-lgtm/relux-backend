@@ -101,6 +101,7 @@ function buildSaleEscrowSummary(order) {
     saleEscrowAutoReleaseAt: order.saleEscrowAutoReleaseAt || null,
     saleEscrowReleaseReason: order.saleEscrowReleaseReason || "",
     adminSettlementNote: order.adminSettlementNote || "",
+    fulfillmentStatus: order.fulfillmentStatus || "processing",
   };
 }
 
@@ -211,6 +212,9 @@ function buildSettlementSummary(order, product, overrides = {}) {
     settlementDisputedAt: order.settlementDisputedAt || null,
     adminSettlementNote: order.adminSettlementNote || "",
     escrowStatus: order.escrowStatus || "none",
+    fulfillmentStatus: order.fulfillmentStatus || "processing",
+    returnConfirmedAt: order.returnConfirmedAt || null,
+    deliveryConfirmedAt: order.deliveryConfirmedAt || null,
   };
 }
 
@@ -220,7 +224,14 @@ async function processBuyerRefund(order, refundAmountPkr, metadata = {}) {
   }
 
   if (!order.stripePaymentIntentId) {
-    return { stripeRefundId: "", demoMode: true };
+    // Tests/local demo may run without a real PaymentIntent.
+    // Production must refund on Stripe (or admin refunds manually in Dashboard).
+    if (process.env.NODE_ENV !== "production") {
+      return { stripeRefundId: "", demoMode: true };
+    }
+    throw new Error(
+      `Cannot refund PKR ${refundAmountPkr}: this order has no Stripe payment intent. Open Stripe and refund payment manually, or check that checkout completed.`,
+    );
   }
 
   const stripe = getStripe();
@@ -383,6 +394,10 @@ async function releaseSaleEscrow(order, overrides = {}, releaseReason = "buyer_c
   if (order.escrowSettlementStatus === "disputed" && releaseReason !== "admin_settled") {
     throw new Error("Escrow is frozen while admin reviews the delivery dispute");
   }
+  // Allow admin to retry after a failed Stripe/refund attempt.
+  if (order.escrowStatus === "failed" && releaseReason === "admin_settled") {
+    order.escrowStatus = "held";
+  }
 
   const breakdown = calculateSaleEscrow(order, overrides);
   if (breakdown.exceedsTotal) {
@@ -411,6 +426,9 @@ async function releaseSaleEscrow(order, overrides = {}, releaseReason = "buyer_c
       }
       if (!order.refundedAt) {
         order.refundedAt = new Date();
+      }
+      if (!stripeRefundId && !refundResult.demoMode) {
+        throw new Error("Stripe refund did not return a refund id");
       }
     }
 

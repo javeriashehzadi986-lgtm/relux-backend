@@ -330,16 +330,12 @@ async function adminResolveSettlement(req, res) {
 
     assertEscrowHeld(order);
 
-    if (order.disputeReportId) {
-      const report = await Report.findById(order.disputeReportId);
-      if (report && !Report.isMediationComplete(report)) {
-        return res.status(400).json({
-          message:
-            "Contact both buyer and seller and wait for their responses before releasing escrow.",
-          disputeStage: report.disputeStage,
-          mediationComplete: false,
-        });
-      }
+    // Seller must confirm the returned item was received before admin can release escrow.
+    if (!order.returnConfirmedAt) {
+      return res.status(400).json({
+        message:
+          "Seller has not confirmed receiving the returned product yet. Wait for return confirmation before releasing escrow.",
+      });
     }
 
     const {

@@ -340,7 +340,7 @@ async function updateAdminReport(req, res) {
 
       if (!sellerNote || !buyerNote) {
         return res.status(400).json({
-          message: "Write your own message for buyer and seller before contacting them.",
+          message: "Please enter a message for buyer and seller before contacting them.",
         });
       }
 
@@ -391,7 +391,7 @@ async function updateAdminReport(req, res) {
 
       if (!note) {
         return res.status(400).json({
-          message: "Write your own message for the seller before contacting them.",
+          message: "Please enter a message for the seller before contacting them.",
         });
       }
 
@@ -434,7 +434,7 @@ async function updateAdminReport(req, res) {
 
       if (!note) {
         return res.status(400).json({
-          message: "Write your own message for the buyer before contacting them.",
+          message: "Please enter a message for the buyer before contacting them.",
         });
       }
 
@@ -472,7 +472,7 @@ async function updateAdminReport(req, res) {
           "";
         if (!resolveText) {
           return res.status(400).json({
-            message: "Write your own decision/message before resolving or dismissing.",
+            message: "Please enter a message before resolving or dismissing.",
           });
         }
       }

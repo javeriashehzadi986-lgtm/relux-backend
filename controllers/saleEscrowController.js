@@ -30,14 +30,16 @@ async function loadSaleOrderForBuyer(orderId, buyerId) {
   }).populate("productId", "title itemPrice");
 }
 
-function assertSaleEscrowHeld(order) {
+function assertSaleEscrowHeld(order, { allowFailedRetry = false } = {}) {
   if (order.paymentStatus !== "paid") {
     throw new Error("Purchase must be paid before escrow actions");
   }
   if (order.escrowStatus === "released") {
     throw new Error("Escrow has already been released for this order");
   }
-  if (order.escrowStatus !== "held") {
+  const heldOk = order.escrowStatus === "held";
+  const failedRetryOk = allowFailedRetry && order.escrowStatus === "failed";
+  if (!heldOk && !failedRetryOk) {
     throw new Error("No escrow is held for this purchase");
   }
 }
@@ -168,18 +170,10 @@ async function adminResolveSaleEscrow(req, res) {
       });
     }
 
-    assertSaleEscrowHeld(order);
-
-    if (order.disputeReportId) {
-      const report = await Report.findById(order.disputeReportId);
-      if (report && !Report.isMediationComplete(report)) {
-        return res.status(400).json({
-          message:
-            "Contact both buyer and seller and wait for their responses before releasing escrow.",
-          disputeStage: report.disputeStage,
-          mediationComplete: false,
-        });
-      }
+    assertSaleEscrowHeld(order, { allowFailedRetry: true });
+    // Previous Stripe/refund attempt may have left escrowStatus=failed — reset for retry.
+    if (order.escrowStatus === "failed") {
+      order.escrowStatus = "held";
     }
 
     const { sellerPayoutPkr, refundAmountPkr, adminSettlementNote, decision, resolveReport } =
@@ -197,6 +191,16 @@ async function adminResolveSaleEscrow(req, res) {
       });
     }
 
+    // Paying the seller requires buyer receipt confirmation.
+    // Full/partial buyer refunds are allowed without it (e.g. item not received).
+    if (breakdown.sellerPayoutPkr > 0 && !order.deliveryConfirmedAt) {
+      return res.status(400).json({
+        message:
+          "Buyer has not confirmed receipt yet. Set seller payout to 0 and refund the buyer, or wait for delivery confirmation.",
+        settlement: buildSaleEscrowSummary(order),
+      });
+    }
+
     order.adminSettlementNote = String(adminSettlementNote || decision || "").trim();
     order.adminSettledBy = req.user._id;
     await order.save();
@@ -208,10 +212,14 @@ async function adminResolveSaleEscrow(req, res) {
       if (report) {
         report.status = "resolved";
         report.disputeStage = "resolved";
-        report.decision = decision?.trim() || report.adminReply || "";
-        if (report.decision) {
-          report.adminReply = report.decision;
-        }
+        const resolveText =
+          decision?.trim() ||
+          report.adminReply ||
+          (breakdown.refundAmountPkr > 0
+            ? `Escrow released — PKR ${breakdown.refundAmountPkr} refunded to buyer.`
+            : "Escrow released by admin.");
+        report.decision = resolveText;
+        report.adminReply = resolveText;
         report.reviewedAt = new Date();
         report.reviewedBy = req.user._id;
         await report.save();
