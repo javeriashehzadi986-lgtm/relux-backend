@@ -121,6 +121,9 @@ async function createRentalRequest(req, res) {
       productId: product._id,
       type: "rental",
       status: { $in: ["pending", "cancelled", "rejected"] },
+      // Never reuse an order that already took payment / escrow (e.g. disputed then refunded).
+      paymentStatus: { $nin: ["paid", "refunded"] },
+      escrowStatus: { $nin: ["held", "released", "failed"] },
       removedByBuyer: false,
     }).sort({ updatedAt: -1 });
 
@@ -133,6 +136,31 @@ async function createRentalRequest(req, res) {
       existing.status = "pending";
       existing.buyerName = req.user.name;
       existing.removedByBuyer = false;
+      existing.paymentStatus = "unpaid";
+      existing.escrowStatus = "none";
+      existing.escrowSettlementStatus = "none";
+      existing.amountPkr = 0;
+      existing.itemAmountPkr = 0;
+      existing.deliveryChargesPkr = 0;
+      existing.refundAmountPkr = 0;
+      existing.sellerPayoutPkr = 0;
+      existing.rentalChargePkr = 0;
+      existing.damageDeductionPkr = 0;
+      existing.lateFeePkr = 0;
+      existing.disputeReason = "";
+      existing.disputeReportId = undefined;
+      existing.stripeSessionId = "";
+      existing.stripePaymentIntentId = "";
+      existing.stripeRefundId = "";
+      existing.stripeTransferId = "";
+      existing.sellerPayoutStatus = "none";
+      existing.fulfillmentStatus = "processing";
+      existing.shippedAt = null;
+      existing.deliveryConfirmedAt = null;
+      existing.returnConfirmedAt = null;
+      existing.paidAt = null;
+      existing.refundedAt = null;
+      existing.escrowReleasedAt = null;
       await existing.save();
       order = existing;
     } else {

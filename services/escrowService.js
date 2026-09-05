@@ -263,25 +263,48 @@ function formatPkr(amount) {
 
 function buildSettlementSummary(order, product, overrides = {}) {
   const breakdown = calculateRentalEscrow(order, product, overrides);
+  const released = order.escrowStatus === "released";
+  const disputed = (order.escrowSettlementStatus || "none") === "disputed";
+
+  // After release, always show the saved admin/seller amounts.
+  // Important: use nullish coalescing — `0 || calculated` was wrongly showing rent+delivery
+  // as seller payout when admin intentionally set seller payout to 0.
+  let refundAmountPkr = breakdown.refundAmountPkr;
+  let sellerPayoutPkr = breakdown.sellerPayoutPkr;
+
+  if (released) {
+    refundAmountPkr =
+      order.refundAmountPkr !== undefined && order.refundAmountPkr !== null
+        ? Number(order.refundAmountPkr) || 0
+        : breakdown.refundAmountPkr;
+    sellerPayoutPkr =
+      order.sellerPayoutPkr !== undefined && order.sellerPayoutPkr !== null
+        ? Number(order.sellerPayoutPkr) || 0
+        : breakdown.sellerPayoutPkr;
+  } else if (
+    disputed &&
+    overrides.sellerPayoutPkr === undefined &&
+    overrides.refundAmountPkr === undefined
+  ) {
+    // Open delivery/return dispute: propose full buyer refund, no seller payout
+    // (same default as resale disputes) — do not show rent-formula "proposed" amounts.
+    refundAmountPkr = breakdown.totalPaidPkr;
+    sellerPayoutPkr = 0;
+  }
+
   return {
     orderType: "rental",
     depositPkr: breakdown.depositPkr,
     deliveryChargesPkr: breakdown.deliveryChargesPkr,
     totalPaidPkr: breakdown.totalPaidPkr,
     itemAmountPkr: order.itemAmountPkr || breakdown.depositPkr,
-    rentalChargePkr: breakdown.rentalChargePkr,
-    damageDeductionPkr: breakdown.damageDeductionPkr,
-    lateFeePkr: breakdown.lateFeePkr,
-    totalDeductionsPkr: breakdown.totalDeductionsPkr,
-    refundAmountPkr:
-      order.escrowStatus === "released"
-        ? order.refundAmountPkr || breakdown.refundAmountPkr
-        : breakdown.refundAmountPkr,
-    sellerPayoutPkr:
-      order.escrowStatus === "released"
-        ? order.sellerPayoutPkr || breakdown.sellerPayoutPkr
-        : breakdown.sellerPayoutPkr,
-    additionalChargePkr: breakdown.additionalChargePkr,
+    rentalChargePkr: released || disputed ? 0 : breakdown.rentalChargePkr,
+    damageDeductionPkr: released || disputed ? 0 : breakdown.damageDeductionPkr,
+    lateFeePkr: released || disputed ? 0 : breakdown.lateFeePkr,
+    totalDeductionsPkr: sellerPayoutPkr,
+    refundAmountPkr,
+    sellerPayoutPkr,
+    additionalChargePkr: 0,
     exceedsTotal: Boolean(breakdown.exceedsTotal),
     escrowSettlementStatus: order.escrowSettlementStatus || "none",
     settlementNote: order.settlementNote || "",
