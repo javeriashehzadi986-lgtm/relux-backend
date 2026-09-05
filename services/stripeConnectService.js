@@ -66,9 +66,13 @@ async function transferSellerPayout({ order, sellerId, amountPkr }) {
   const stripe = getStripe();
   const currency = getCurrency();
   const amount = toStripeUnitAmount(payoutPkr);
-  const chargeId = order.stripePaymentIntentId
-    ? await getChargeIdForPaymentIntent(order.stripePaymentIntentId)
-    : null;
+  // After a buyer refund, source_transaction usually cannot cover the seller share
+  // (fees + reduced remaining charge). Use platform balance instead.
+  const alreadyRefunded = Boolean(order.stripeRefundId);
+  const chargeId =
+    !alreadyRefunded && order.stripePaymentIntentId
+      ? await getChargeIdForPaymentIntent(order.stripePaymentIntentId)
+      : null;
 
   const buildParams = (useSourceTransaction) => {
     const params = {
@@ -100,7 +104,8 @@ async function transferSellerPayout({ order, sellerId, amountPkr }) {
       skipped: false,
     };
   } catch (firstError) {
-    // source_transaction can fail (cross-currency / charge state). Retry from platform balance.
+    // source_transaction can fail (cross-currency / charge state / post-refund).
+    // Retry from platform balance.
     if (chargeId) {
       try {
         const transfer = await stripe.transfers.create(buildParams(false));

@@ -5,6 +5,7 @@ const {
   buildOrderLogistics,
 } = require("../services/orderStatusService");
 const { getEscrowLabel } = require("../services/escrowService");
+const { emitOrderUpdated } = require("../services/orderSocketService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -386,6 +387,7 @@ async function updateAdminOrderStatus(req, res) {
     order.status = status;
     await order.save();
     await syncProductForOrder(order);
+    emitOrderUpdated(order);
 
     const mapped =
       order.type === "rental" ? toRentalAdminJSON(order) : toSaleAdminJSON(order);

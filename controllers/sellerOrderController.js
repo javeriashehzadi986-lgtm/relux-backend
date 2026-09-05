@@ -19,6 +19,7 @@ const {
   releaseRentalEscrow,
   formatPkr,
 } = require("../services/escrowService");
+const { emitOrderUpdated } = require("../services/orderSocketService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -86,6 +87,7 @@ const DEFAULT_DELIVERY_PKR = 300;
       order.deliveryChargesPkr = deliveryChargesPkr;
     }
     await order.save();
+    emitOrderUpdated(order);
 
     notifyBookingConfirmed({
       buyerId: order.buyerId,
@@ -116,6 +118,7 @@ async function rejectOrder(req, res) {
     order.status = "rejected";
     await order.save();
     await syncProductForOrder(order);
+    emitOrderUpdated(order);
 
     const product = await Product.findById(order.productId).select("title");
     notifyBookingRejected({
@@ -169,6 +172,7 @@ async function completeOrder(req, res) {
     order.status = "completed";
     await order.save();
     await syncProductForOrder(order);
+    emitOrderUpdated(order);
 
     const product = await Product.findById(order.productId).select("title");
     notifyRentalCompleted({
@@ -237,6 +241,8 @@ async function shipOrder(req, res) {
       .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
       .populate("buyerId", "name")
       .populate("sellerId", "name");
+
+    emitOrderUpdated(fresh || order);
 
     res.json({
       message: "Order marked as shipped",
@@ -313,6 +319,8 @@ async function confirmReturnReceived(req, res) {
       sellerPayoutLabel: formatPkr(result.sellerPayoutPkr),
       transferSent: Boolean(result.stripeTransferId),
     });
+
+    emitOrderUpdated(result.order || order);
 
     let message =
       result.refundAmountPkr > 0

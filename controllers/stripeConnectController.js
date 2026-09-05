@@ -2,6 +2,7 @@ const SellerVerification = require("../models/SellerVerification");
 const Order = require("../models/Order");
 const { getStripe, getFrontendUrl, getCurrency } = require("../services/stripeService");
 const { syncSellerConnectAccount } = require("../services/stripeConnectService");
+const { retryPendingSellerPayouts } = require("../services/escrowService");
 
 function getErrorMessage(error) {
   if (error?.type === "StripeInvalidRequestError") {
@@ -277,9 +278,36 @@ async function getSellerPayoutOverview(req, res) {
   }
 }
 
+/** Seller: retry Stripe transfers for ledger_only / failed payouts */
+async function retrySellerStripePayouts(req, res) {
+  try {
+    if (req.user.role !== "seller") {
+      return res.status(403).json({ message: "Only sellers can retry payouts" });
+    }
+
+    const results = await retryPendingSellerPayouts(req.user._id);
+    const transferred = results.filter((item) => item.ok).length;
+    const failed = results.length - transferred;
+
+    res.json({
+      message:
+        results.length === 0
+          ? "No pending payouts to send to Stripe"
+          : `Sent ${transferred} payout(s) to Stripe${failed ? `, ${failed} still pending` : ""}`,
+      transferred,
+      failed,
+      results,
+    });
+  } catch (error) {
+    console.error("[seller payout retry]", error);
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
 module.exports = {
   createConnectOnboardingLink,
   createExpressDashboardLink,
   getConnectStatus,
   getSellerPayoutOverview,
+  retrySellerStripePayouts,
 };

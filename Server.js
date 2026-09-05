@@ -134,7 +134,7 @@ const startServer = async () => {
 
   server.listen(PORT, () => {
     console.log(`Auth server running on http://localhost:${PORT}`);
-    console.log("Socket.io enabled for real-time chat and auctions");
+    console.log("Socket.io enabled for real-time chat, auctions, orders, and support");
   });
 
   const { finalizeEndedAuctions } = require("./services/auctionFinalizeService");

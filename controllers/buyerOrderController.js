@@ -13,6 +13,7 @@ const {
   ensurePaid,
 } = require("../services/orderStatusService");
 const { releaseSaleEscrow } = require("../services/escrowService");
+const { emitOrderUpdated } = require("../services/orderSocketService");
 
 function getErrorMessage(error) {
   if (error.code === 11000) {
@@ -107,6 +108,8 @@ async function createRentalRequest(req, res) {
         rentEnd,
       });
 
+      emitOrderUpdated(activeApproved);
+
       return res.status(201).json({
         message: "Rental request updated with new dates — waiting for seller approval",
         order: activeApproved.toBuyerJSON(),
@@ -155,6 +158,8 @@ async function createRentalRequest(req, res) {
       rentStart,
       rentEnd,
     });
+
+    emitOrderUpdated(order);
 
     res.status(201).json({
       message: "Rental request submitted",
@@ -242,6 +247,7 @@ async function cancelMyOrder(req, res) {
 
     order.status = "cancelled";
     await order.save();
+    emitOrderUpdated(order);
 
     const product = await Product.findById(order.productId).select("title sellerId");
     if (product) {
@@ -332,6 +338,7 @@ async function confirmReceivedOrder(req, res) {
         sellerPayoutLabel: `PKR ${(result.sellerPayoutPkr || 0).toLocaleString("en-PK")}`,
         transferSent: Boolean(result.stripeTransferId),
       });
+      emitOrderUpdated(result.order || order);
       return res.json({
         message: "Receipt confirmed — payment released to seller",
         order: result.order.toBuyerJSON(),
@@ -356,6 +363,8 @@ async function confirmReceivedOrder(req, res) {
     const fresh = await Order.findById(order._id)
       .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
       .populate("sellerId", "name");
+
+    emitOrderUpdated(fresh || order);
 
     res.json({
       message: "Receipt confirmed",
@@ -405,6 +414,8 @@ async function markReturnedOrder(req, res) {
     const fresh = await Order.findById(order._id)
       .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
       .populate("sellerId", "name");
+
+    emitOrderUpdated(fresh || order);
 
     res.json({
       message: "Return recorded",

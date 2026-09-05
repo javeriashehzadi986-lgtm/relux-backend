@@ -14,6 +14,8 @@ const {
   notifySettlementDisputed,
   notifySaleDeliveryDisputed,
 } = require("../services/notificationService");
+const { emitOrderUpdated } = require("../services/orderSocketService");
+const { emitReportUpdated } = require("../services/reportSocketService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -183,12 +185,18 @@ async function disputeRentalDelivery(req, res) {
       await order.save();
     }
 
+    if (report) {
+      emitReportUpdated(report).catch(() => {});
+    }
+
     await notifySaleDeliveryDisputed({
       buyerId: order.buyerId,
       sellerId: order.sellerId,
       productTitle: product?.title ?? "your rental",
       orderId: order._id,
     });
+
+    emitOrderUpdated(order);
 
     res.json({
       message: "Delivery dispute submitted — payment is held until admin resolves it",
@@ -273,12 +281,18 @@ async function disputeRentalReturn(req, res) {
       await order.save();
     }
 
+    if (report) {
+      emitReportUpdated(report).catch(() => {});
+    }
+
     notifySettlementDisputed({
       buyerId: order.buyerId,
       sellerId: order.sellerId,
       productTitle: product?.title ?? "rental item",
       orderId: order._id,
     });
+
+    emitOrderUpdated(order);
 
     res.json({
       message: "Return dispute submitted — escrow is held until admin resolves it",
@@ -369,6 +383,7 @@ async function adminResolveSettlement(req, res) {
         report.reviewedAt = new Date();
         report.reviewedBy = req.user._id;
         await report.save();
+        emitReportUpdated(report).catch(() => {});
       }
     }
 
@@ -382,6 +397,8 @@ async function adminResolveSettlement(req, res) {
       sellerPayoutLabel: formatPkr(result.sellerPayoutPkr),
       transferSent: Boolean(result.stripeTransferId),
     });
+
+    emitOrderUpdated(result.order || order);
 
     res.json({
       message: "Escrow released with admin settlement",

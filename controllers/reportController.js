@@ -3,6 +3,7 @@ const Order = require("../models/Order");
 const Product = require("../models/Product");
 const User = require("../models/User");
 const { notifyReportResolved, notifyDisputeMediationRequested, notifyDisputePartyResponded } = require("../services/notificationService");
+const { emitReportUpdated } = require("../services/reportSocketService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -108,6 +109,7 @@ async function createReport(req, res) {
     }
 
     const report = await Report.create(payload);
+    emitReportUpdated(report).catch(() => {});
 
     res.status(201).json({
       report: report.toReporterJSON(req.user._id, role),
@@ -201,6 +203,8 @@ async function submitSellerResponse(req, res) {
       orderId: report.orderId,
     }).catch(() => {});
 
+    emitReportUpdated(report).catch(() => {});
+
     res.json({
       report: report.toReporterJSON(req.user._id, "seller"),
       message: "Your response was sent to admin",
@@ -264,6 +268,8 @@ async function submitBuyerResponse(req, res) {
       responderRole: "buyer",
       orderId: report.orderId,
     }).catch(() => {});
+
+    emitReportUpdated(report).catch(() => {});
 
     res.json({
       report: report.toReporterJSON(req.user._id, "buyer"),
@@ -369,6 +375,8 @@ async function updateAdminReport(req, res) {
         message: buyerNote,
       }).catch(() => {});
 
+      emitReportUpdated(report).catch(() => {});
+
       return res.json({
         report: report.toAdminJSON(),
         message: "Buyer and seller have been asked to respond",
@@ -412,6 +420,8 @@ async function updateAdminReport(req, res) {
         message: note,
       }).catch(() => {});
 
+      emitReportUpdated(report).catch(() => {});
+
       return res.json({
         report: report.toAdminJSON(),
         message: "Seller has been asked to respond",
@@ -454,6 +464,8 @@ async function updateAdminReport(req, res) {
         subject: report.subject,
         message: note,
       }).catch(() => {});
+
+      emitReportUpdated(report).catch(() => {});
 
       return res.json({
         report: report.toAdminJSON(),
@@ -524,6 +536,8 @@ async function updateAdminReport(req, res) {
         decision: report.decision || report.adminReply,
       }).catch(() => {});
     }
+
+    emitReportUpdated(report).catch(() => {});
 
     res.json({ report: report.toAdminJSON() });
   } catch (error) {

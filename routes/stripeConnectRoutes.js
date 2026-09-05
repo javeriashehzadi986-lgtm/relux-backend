@@ -5,6 +5,7 @@ const {
   createExpressDashboardLink,
   getConnectStatus,
   getSellerPayoutOverview,
+  retrySellerStripePayouts,
 } = require("../controllers/stripeConnectController");
 
 const router = express.Router();
@@ -15,5 +16,6 @@ router.post("/connect", createConnectOnboardingLink);
 router.post("/dashboard-link", createExpressDashboardLink);
 router.get("/status", getConnectStatus);
 router.get("/payouts", getSellerPayoutOverview);
+router.post("/payouts/retry", retrySellerStripePayouts);
 
 module.exports = router;

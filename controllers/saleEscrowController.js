@@ -13,6 +13,8 @@ const {
   notifySaleEscrowReleased,
   notifySaleDeliveryDisputed,
 } = require("../services/notificationService");
+const { emitOrderUpdated } = require("../services/orderSocketService");
+const { emitReportUpdated } = require("../services/reportSocketService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -139,12 +141,18 @@ async function disputeSaleDelivery(req, res) {
       await order.save();
     }
 
+    if (report) {
+      emitReportUpdated(report).catch(() => {});
+    }
+
     notifySaleDeliveryDisputed({
       buyerId: order.buyerId,
       sellerId: order.sellerId,
       productTitle: product?.title ?? "your purchase",
       orderId: order._id,
     });
+
+    emitOrderUpdated(order);
 
     res.json({
       message: "Delivery dispute submitted — payment is held until admin resolves it",
@@ -223,6 +231,7 @@ async function adminResolveSaleEscrow(req, res) {
         report.reviewedAt = new Date();
         report.reviewedBy = req.user._id;
         await report.save();
+        emitReportUpdated(report).catch(() => {});
       }
     }
 
@@ -236,6 +245,8 @@ async function adminResolveSaleEscrow(req, res) {
       sellerPayoutLabel: formatPkr(result.sellerPayoutPkr),
       transferSent: Boolean(result.stripeTransferId),
     });
+
+    emitOrderUpdated(result.order || order);
 
     res.json({
       message: "Sale escrow released with admin decision",

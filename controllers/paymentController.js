@@ -9,6 +9,7 @@ const {
   notifySellerDispatchDetails,
 } = require("../services/notificationService");
 const { syncProductForOrder } = require("../services/orderStatusService");
+const { emitOrderUpdated } = require("../services/orderSocketService");
 const {
   getStripe,
   getCurrency,
@@ -542,6 +543,7 @@ async function markOrderPaidFromSession(session, orderDoc) {
   }
   await order.save();
   await syncProductForOrder(order);
+  emitOrderUpdated(order);
 
   const [product, buyer] = await Promise.all([
     Product.findById(order.productId),

@@ -352,6 +352,19 @@ async function releaseRentalEscrow(order, overrides = {}) {
   let transferMessage = "";
 
   try {
+    // Transfer seller share FIRST while the full charge is still available.
+    // Rentals usually refund most of the deposit; doing the refund first makes
+    // source_transaction transfers fail (fees + remaining balance), which left
+    // payouts as ledger_only on Relux while Stripe stayed empty.
+    if (breakdown.sellerPayoutPkr > 0) {
+      const transferResult = await processSellerPayoutTransfer(order, breakdown.sellerPayoutPkr);
+      stripeTransferId = transferResult.stripeTransferId;
+      demoMode = demoMode || transferResult.demoMode;
+      transferSkipped = Boolean(transferResult.transferSkipped);
+      transferSkipReason = transferResult.transferSkipReason || "";
+      transferMessage = transferResult.transferMessage || "";
+    }
+
     if (breakdown.refundAmountPkr > 0) {
       const refundResult = await processBuyerRefund(order, breakdown.refundAmountPkr, {
         rentalChargePkr: String(breakdown.rentalChargePkr),
@@ -369,15 +382,6 @@ async function releaseRentalEscrow(order, overrides = {}) {
       if (breakdown.refundAmountPkr >= breakdown.depositPkr) {
         order.paymentStatus = "refunded";
       }
-    }
-
-    if (breakdown.sellerPayoutPkr > 0) {
-      const transferResult = await processSellerPayoutTransfer(order, breakdown.sellerPayoutPkr);
-      stripeTransferId = transferResult.stripeTransferId;
-      demoMode = demoMode || transferResult.demoMode;
-      transferSkipped = Boolean(transferResult.transferSkipped);
-      transferSkipReason = transferResult.transferSkipReason || "";
-      transferMessage = transferResult.transferMessage || "";
     }
 
     order.escrowStatus = "released";
@@ -450,6 +454,15 @@ async function releaseSaleEscrow(order, overrides = {}, releaseReason = "buyer_c
   let transferSkipped = false;
 
   try {
+    // Prefer transferring the seller share before any buyer refund so the
+    // charge still has enough balance for source_transaction transfers.
+    if (breakdown.sellerPayoutPkr > 0) {
+      const transferResult = await processSellerPayoutTransfer(order, breakdown.sellerPayoutPkr);
+      stripeTransferId = transferResult.stripeTransferId;
+      demoMode = demoMode || transferResult.demoMode;
+      transferSkipped = transferResult.transferSkipped;
+    }
+
     if (breakdown.refundAmountPkr > 0) {
       const refundResult = await processBuyerRefund(order, breakdown.refundAmountPkr, {
         sellerPayoutPkr: String(breakdown.sellerPayoutPkr),
@@ -465,13 +478,6 @@ async function releaseSaleEscrow(order, overrides = {}, releaseReason = "buyer_c
       if (!stripeRefundId && !refundResult.demoMode) {
         throw new Error("Stripe refund did not return a refund id");
       }
-    }
-
-    if (breakdown.sellerPayoutPkr > 0) {
-      const transferResult = await processSellerPayoutTransfer(order, breakdown.sellerPayoutPkr);
-      stripeTransferId = transferResult.stripeTransferId;
-      demoMode = demoMode || transferResult.demoMode;
-      transferSkipped = transferResult.transferSkipped;
     }
 
     order.escrowStatus = "released";
@@ -527,6 +533,74 @@ async function processSaleEscrowAutoReleases() {
   return results;
 }
 
+/**
+ * Retry Stripe transfers for escrow releases that were recorded on Relux only
+ * (ledger_only / failed), typically after rental refund-before-transfer failures.
+ */
+async function retryPendingSellerPayouts(sellerId) {
+  const Order = require("../models/Order");
+  const filter = {
+    escrowStatus: "released",
+    sellerPayoutPkr: { $gt: 0 },
+    $and: [
+      {
+        $or: [
+          { stripeTransferId: { $exists: false } },
+          { stripeTransferId: null },
+          { stripeTransferId: "" },
+        ],
+      },
+      {
+        $or: [
+          { sellerPayoutStatus: { $in: ["ledger_only", "failed", "none"] } },
+          { sellerPayoutStatus: { $exists: false } },
+          { sellerPayoutStatus: null },
+          { sellerPayoutStatus: "" },
+        ],
+      },
+    ],
+  };
+  if (sellerId) {
+    filter.sellerId = sellerId;
+  }
+
+  const orders = await Order.find(filter).sort({ escrowReleasedAt: -1 }).limit(50);
+  const results = [];
+
+  for (const order of orders) {
+    try {
+      const transferResult = await processSellerPayoutTransfer(
+        order,
+        order.sellerPayoutPkr,
+      );
+      await order.save();
+      results.push({
+        orderId: order.orderId || String(order._id),
+        type: order.type,
+        amountPkr: order.sellerPayoutPkr,
+        ok: !transferResult.transferSkipped && Boolean(transferResult.stripeTransferId),
+        transferId: transferResult.stripeTransferId || "",
+        status: order.sellerPayoutStatus,
+        skipReason: transferResult.transferSkipReason || "",
+        message: transferResult.transferMessage || "",
+      });
+    } catch (error) {
+      results.push({
+        orderId: order.orderId || String(order._id),
+        type: order.type,
+        amountPkr: order.sellerPayoutPkr,
+        ok: false,
+        transferId: "",
+        status: "failed",
+        skipReason: "transfer_failed",
+        message: error.message || "Retry failed",
+      });
+    }
+  }
+
+  return results;
+}
+
 module.exports = {
   parseAmount,
   calculateRentalEscrow,
@@ -538,5 +612,6 @@ module.exports = {
   releaseRentalEscrow,
   releaseSaleEscrow,
   processSaleEscrowAutoReleases,
+  retryPendingSellerPayouts,
   SALE_AUTO_RELEASE_MS,
 };
