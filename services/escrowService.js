@@ -1,5 +1,5 @@
 const Product = require("../models/Product");
-const { getStripe, toStripeUnitAmount } = require("./stripeService");
+const { getStripe, getCurrency, toStripeUnitAmount } = require("./stripeService");
 const { transferSellerPayout } = require("./stripeConnectService");
 const { finalizeOrderAfterEscrowRelease } = require("./orderStatusService");
 
@@ -9,8 +9,21 @@ function parseAmount(value) {
   return Number(String(value ?? "").replace(/[^\d.]/g, "")) || 0;
 }
 
+/** Use saved delivery, or infer from total − deposit when older rows left deliveryChargesPkr at 0. */
+function resolveDeliveryChargesPkr(order) {
+  const stored = Math.max(0, Math.round(Number(order.deliveryChargesPkr) || 0));
+  if (stored > 0) return stored;
+
+  const totalPaid = Math.max(0, Math.round(Number(order.amountPkr) || 0));
+  const itemAmount = Math.max(0, Math.round(Number(order.itemAmountPkr) || 0));
+  if (totalPaid > itemAmount && itemAmount > 0) {
+    return totalPaid - itemAmount;
+  }
+  return 0;
+}
+
 function calculateRentalEscrow(order, product, overrides = {}) {
-  const deliveryChargesPkr = Math.max(0, Math.round(Number(order.deliveryChargesPkr) || 0));
+  const deliveryChargesPkr = resolveDeliveryChargesPkr(order);
   let deposit = Math.max(0, Math.round(Number(order.itemAmountPkr) || 0));
   if (!deposit) {
     const totalPaidFallback = Math.max(0, Math.round(Number(order.amountPkr) || 0));
@@ -292,18 +305,33 @@ function buildSettlementSummary(order, product, overrides = {}) {
     sellerPayoutPkr = 0;
   }
 
+  const showRentBreakdown = !released && !disputed && !breakdown.manualSplit;
+  const rentPerDayPkr = parseAmount(product?.rentPrice);
+  const rentalDays = Math.max(1, Number(order.rentalDays) || 1);
+  const rentalForPeriodPkr = Math.round(rentPerDayPkr * rentalDays);
+
   return {
     orderType: "rental",
     depositPkr: breakdown.depositPkr,
     deliveryChargesPkr: breakdown.deliveryChargesPkr,
     totalPaidPkr: breakdown.totalPaidPkr,
     itemAmountPkr: order.itemAmountPkr || breakdown.depositPkr,
-    rentalChargePkr: released || disputed ? 0 : breakdown.rentalChargePkr,
-    damageDeductionPkr: released || disputed ? 0 : breakdown.damageDeductionPkr,
-    lateFeePkr: released || disputed ? 0 : breakdown.lateFeePkr,
+    rentalDays,
+    rentPerDayPkr,
+    rentalForPeriodPkr,
+    rentStart: order.rentStart || null,
+    rentEnd: order.rentEnd || null,
+    rentalChargePkr: showRentBreakdown ? breakdown.rentalChargePkr : rentalForPeriodPkr,
+    damageDeductionPkr: showRentBreakdown ? breakdown.damageDeductionPkr : 0,
+    lateFeePkr: showRentBreakdown ? breakdown.lateFeePkr : 0,
     totalDeductionsPkr: sellerPayoutPkr,
     refundAmountPkr,
     sellerPayoutPkr,
+    // Happy-path payout = rent (+ damage/late) + delivery charged at checkout.
+    sellerPayoutFromRentPkr: showRentBreakdown
+      ? Math.min(breakdown.depositPkr, breakdown.rentalChargePkr + breakdown.damageDeductionPkr + breakdown.lateFeePkr)
+      : 0,
+    sellerPayoutFromDeliveryPkr: showRentBreakdown ? breakdown.deliveryChargesPkr : 0,
     additionalChargePkr: 0,
     exceedsTotal: Boolean(breakdown.exceedsTotal),
     escrowSettlementStatus: order.escrowSettlementStatus || "none",
@@ -339,7 +367,8 @@ async function processBuyerRefund(order, refundAmountPkr, metadata = {}) {
   }
 
   const stripe = getStripe();
-  const refundUnits = toStripeUnitAmount(refundAmountPkr);
+  const refundCurrency = String(order.currency || getCurrency()).toLowerCase();
+  const refundUnits = toStripeUnitAmount(refundAmountPkr, refundCurrency);
   const maxUnits = order.stripeAmount || refundUnits;
 
   const refund = await stripe.refunds.create({

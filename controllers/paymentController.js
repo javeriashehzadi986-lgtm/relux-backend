@@ -14,6 +14,7 @@ const {
   getStripe,
   getCurrency,
   toStripeUnitAmount,
+  getCheckoutSessionExtras,
   getFrontendUrl,
 } = require("../services/stripeService");
 
@@ -292,6 +293,7 @@ async function createSaleCheckout(req, res) {
       mode: "payment",
       customer_email: shipping.email || req.user.email || undefined,
       line_items: lineItems,
+      ...getCheckoutSessionExtras(),
       metadata: {
         orderId: order._id.toString(),
         orderPublicId: order.orderId,
@@ -405,8 +407,8 @@ async function createRentalCheckout(req, res) {
           currency,
           unit_amount: toStripeUnitAmount(itemAmountPkr),
           product_data: {
-            name: `Rental deposit (escrow) — ${product.title || "Relux Hub"}`,
-            description: `Security deposit held in escrow until return (PKR ${itemAmountPkr.toLocaleString("en-PK")})`,
+            name: `Full dress payment (escrow) — ${product.title || "Relux Hub"}`,
+            description: `Full dress price held in escrow until return: PKR ${itemAmountPkr.toLocaleString("en-PK")}`,
             images: imageUrl ? [imageUrl] : undefined,
           },
         },
@@ -431,6 +433,7 @@ async function createRentalCheckout(req, res) {
       mode: "payment",
       customer_email: req.user.email || undefined,
       line_items: lineItems,
+      ...getCheckoutSessionExtras(),
       metadata: {
         orderId: order._id.toString(),
         orderPublicId: order.orderId,
@@ -438,6 +441,8 @@ async function createRentalCheckout(req, res) {
         buyerId: req.user._id.toString(),
         orderType: "rental",
         deliveryPkr: String(deliveryCharges),
+        itemAmountPkr: String(itemAmountPkr),
+        totalPkr: String(totalPkr),
       },
       success_url: `${frontend}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${frontend}/payment/cancel?order_id=${order._id}`,
@@ -454,6 +459,12 @@ async function createRentalCheckout(req, res) {
       message: "Checkout session created",
       url: session.url,
       sessionId: session.id,
+      amounts: {
+        itemAmountPkr,
+        deliveryChargesPkr: deliveryCharges,
+        totalPkr,
+        currency,
+      },
       order: order.toBuyerJSON(),
     });
   } catch (error) {

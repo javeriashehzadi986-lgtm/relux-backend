@@ -18,13 +18,14 @@ function getCurrency() {
 }
 
 /**
- * Relux stores prices in PKR. Stripe account currency may be USD/EUR/etc.
- * Convert PKR → charge currency using STRIPE_PKR_TO_CURRENCY (default 280 ≈ PKR per 1 USD).
- * If STRIPE_CURRENCY=pkr, charge PKR paisa directly.
+ * Relux prices are stored in PKR and converted for Stripe.
+ * Default charge currency is USD (matches Connect Express settlement).
+ * Always disable Adaptive Pricing on Checkout — otherwise Stripe re-presents
+ * a higher local PKR total than Relux quoted (e.g. 50,000 → ~51,538).
  */
-function toStripeUnitAmount(pkrAmount) {
+function toStripeUnitAmount(pkrAmount, currencyOverride) {
   const pkr = Math.max(0, Math.round(Number(pkrAmount) || 0));
-  const currency = getCurrency();
+  const currency = String(currencyOverride || getCurrency()).toLowerCase();
 
   if (currency === "pkr") {
     return Math.max(100, pkr * 100);
@@ -34,6 +35,13 @@ function toStripeUnitAmount(pkrAmount) {
   const major = pkr / rate;
   const cents = Math.round(major * 100);
   return Math.max(50, cents);
+}
+
+/** Shared Checkout flags — never let Adaptive Pricing inflate quoted PKR. */
+function getCheckoutSessionExtras() {
+  return {
+    adaptive_pricing: { enabled: false },
+  };
 }
 
 function getFrontendUrl() {
@@ -52,6 +60,7 @@ module.exports = {
   getStripe,
   getCurrency,
   toStripeUnitAmount,
+  getCheckoutSessionExtras,
   getFrontendUrl,
   getBackendPublicUrl,
 };

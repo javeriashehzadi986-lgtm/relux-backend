@@ -359,14 +359,10 @@ async function adminResolveSettlement(req, res) {
       });
     }
 
-    // Paying the seller requires buyer receipt confirmation (same as resale disputes).
-    // Full/partial buyer refunds are allowed without it (e.g. item not received).
+    // Admin may pay the seller on any dispute (delivery / return / damage / sale)
+    // even if the buyer never confirmed receipt — split is fully manual.
     if (breakdown.sellerPayoutPkr > 0 && !order.deliveryConfirmedAt) {
-      return res.status(400).json({
-        message:
-          "Buyer has not confirmed receipt yet. Set seller payout to 0 and refund the buyer, or wait for delivery confirmation.",
-        settlement: buildSettlementSummary(order, product, overrides),
-      });
+      order.deliveryConfirmedAt = order.deliveryConfirmedAt || new Date();
     }
 
     order.rentalChargePkr = 0;

@@ -297,6 +297,8 @@ async function confirmReturnReceived(req, res) {
     order.lateFeePkr = 0;
     await order.save();
 
+    // Happy-path return: seller gets (rentPrice × rentalDays) + delivery charged at checkout.
+    // Buyer gets the rest of the dress deposit back. No separate "daily rate" charge at pay time.
     const product = order.productId;
     const result = await releaseRentalEscrow(order, {
       damageDeductionPkr: 0,
@@ -328,7 +330,7 @@ async function confirmReturnReceived(req, res) {
         : "Return confirmed — escrow released to seller.";
 
     if (result.sellerPayoutPkr > 0 && result.stripeTransferId) {
-      message += ` ${formatPkr(result.sellerPayoutPkr)} sent to your Stripe Connect account.`;
+      message += ` ${formatPkr(result.sellerPayoutPkr)} sent to your Stripe Connect account (rental for ${order.rentalDays || 1} day(s) + delivery).`;
     } else if (result.sellerPayoutPkr > 0 && result.transferSkipped) {
       message += ` Seller payout ${formatPkr(result.sellerPayoutPkr)} was recorded but not transferred yet${
         result.transferMessage ? `: ${result.transferMessage}` : "."

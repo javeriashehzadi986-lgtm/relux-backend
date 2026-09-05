@@ -36,6 +36,10 @@ async function getChargeIdForPaymentIntent(paymentIntentId) {
 /**
  * Transfer seller payout from platform balance to seller Connect account.
  * Uses source_transaction when available so transfer is tied to the buyer charge.
+ *
+ * Charges may be in pkr while Connect / platform settlement is usd — try the
+ * order currency first, then fall back to usd so ledger_only / failed payouts
+ * still reach the seller Express dashboard.
  */
 async function transferSellerPayout({ order, sellerId, amountPkr }) {
   const payoutPkr = Math.max(0, Math.round(Number(amountPkr) || 0));
@@ -64,8 +68,16 @@ async function transferSellerPayout({ order, sellerId, amountPkr }) {
   }
 
   const stripe = getStripe();
-  const currency = getCurrency();
-  const amount = toStripeUnitAmount(payoutPkr);
+  const orderCurrency = String(order.currency || getCurrency()).toLowerCase();
+  const platformCurrency = getCurrency();
+  // Connect Express settles in platform currency (usd). Prefer that first so
+  // confirm-return / release sends money automatically without a seller retry click.
+  const currencies = [
+    ...new Set(
+      [platformCurrency, orderCurrency, "usd"].filter(Boolean),
+    ),
+  ];
+
   // After a buyer refund, source_transaction usually cannot cover the seller share
   // (fees + reduced remaining charge). Use platform balance instead.
   const alreadyRefunded = Boolean(order.stripeRefundId);
@@ -74,9 +86,9 @@ async function transferSellerPayout({ order, sellerId, amountPkr }) {
       ? await getChargeIdForPaymentIntent(order.stripePaymentIntentId)
       : null;
 
-  const buildParams = (useSourceTransaction) => {
+  const buildParams = (currency, useSourceTransaction) => {
     const params = {
-      amount,
+      amount: toStripeUnitAmount(payoutPkr, currency),
       currency,
       destination: verification.stripeAccountId,
       description: `Relux Hub payout — order ${order.orderId || order._id}`,
@@ -86,69 +98,58 @@ async function transferSellerPayout({ order, sellerId, amountPkr }) {
         sellerId: sellerId.toString(),
         sellerPayoutPkr: String(payoutPkr),
         orderType: order.type || "",
+        transferCurrency: currency,
       },
     };
-    if (useSourceTransaction && chargeId) {
+    // source_transaction must match transfer currency — skip when falling back.
+    if (
+      useSourceTransaction &&
+      chargeId &&
+      currency === orderCurrency
+    ) {
       params.source_transaction = chargeId;
     }
     return params;
   };
 
   const strict = String(process.env.STRIPE_CONNECT_STRICT || "").toLowerCase() === "true";
+  const errors = [];
 
-  try {
-    const transfer = await stripe.transfers.create(buildParams(Boolean(chargeId)));
-    return {
-      transferId: transfer.id,
-      demoMode: false,
-      skipped: false,
-    };
-  } catch (firstError) {
-    // source_transaction can fail (cross-currency / charge state / post-refund).
-    // Retry from platform balance.
-    if (chargeId) {
+  for (const currency of currencies) {
+    const trySource = Boolean(chargeId) && currency === orderCurrency;
+    const attempts = trySource ? [true, false] : [false];
+
+    for (const useSource of attempts) {
       try {
-        const transfer = await stripe.transfers.create(buildParams(false));
+        const transfer = await stripe.transfers.create(
+          buildParams(currency, useSource),
+        );
         return {
           transferId: transfer.id,
           demoMode: false,
           skipped: false,
-          retriedWithoutSource: true,
+          currency,
+          retriedWithoutSource: trySource && !useSource,
         };
-      } catch (retryError) {
-        if (strict) {
-          throw new Error(retryError.message || "Stripe could not transfer payout to seller");
-        }
-        console.error(
-          "[stripe connect transfer retry]",
-          retryError.message || retryError,
-          "| first:",
-          firstError.message || firstError,
-        );
-        return {
-          skipped: true,
-          demoMode: false,
-          reason: "transfer_failed",
-          message: retryError.message || firstError.message || "Transfer failed",
-        };
+      } catch (error) {
+        errors.push(`${currency}${useSource ? "+source" : ""}: ${error.message || error}`);
       }
     }
-
-    if (strict) {
-      throw new Error(firstError.message || "Stripe could not transfer payout to seller");
-    }
-    console.error("[stripe connect transfer]", firstError.message || firstError);
-    return {
-      skipped: true,
-      demoMode: !order.stripePaymentIntentId,
-      reason: order.stripePaymentIntentId ? "transfer_failed" : "no_payment_intent",
-      message:
-        firstError.message ||
-        (order.stripePaymentIntentId
-          ? "Transfer failed"
-          : "No Stripe payment on file — payout recorded only"),
-    };
   }
+
+  const message = errors[errors.length - 1] || "Transfer failed";
+  if (strict) {
+    throw new Error(message);
+  }
+  console.error("[stripe connect transfer]", errors.join(" | "));
+  return {
+    skipped: true,
+    demoMode: !order.stripePaymentIntentId,
+    reason: order.stripePaymentIntentId ? "transfer_failed" : "no_payment_intent",
+    message: order.stripePaymentIntentId
+      ? message
+      : "No Stripe payment on file — payout recorded only",
+  };
 }
 
 module.exports = {

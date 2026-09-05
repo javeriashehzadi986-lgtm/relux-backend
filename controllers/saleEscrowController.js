@@ -199,14 +199,9 @@ async function adminResolveSaleEscrow(req, res) {
       });
     }
 
-    // Paying the seller requires buyer receipt confirmation.
-    // Full/partial buyer refunds are allowed without it (e.g. item not received).
+    // Admin decides the split manually for every dispute — including before receipt.
     if (breakdown.sellerPayoutPkr > 0 && !order.deliveryConfirmedAt) {
-      return res.status(400).json({
-        message:
-          "Buyer has not confirmed receipt yet. Set seller payout to 0 and refund the buyer, or wait for delivery confirmation.",
-        settlement: buildSaleEscrowSummary(order),
-      });
+      order.deliveryConfirmedAt = order.deliveryConfirmedAt || new Date();
     }
 
     order.adminSettlementNote = String(adminSettlementNote || decision || "").trim();
