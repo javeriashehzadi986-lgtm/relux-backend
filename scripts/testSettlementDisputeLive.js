@@ -121,9 +121,9 @@ async function main() {
       `/api/admin/orders/${order._id}/settlement/resolve`,
       adminToken,
       {
-        rentalChargePkr: 15000,
-        damageDeductionPkr: 2000,
-        decision: "Admin reduced damage after review",
+        sellerPayoutPkr: 17000,
+        refundAmountPkr: 33000,
+        decision: "Admin split: PKR 17,000 to seller, PKR 33,000 refunded to buyer",
       },
     );
     if (resolve.status !== 200) throw new Error(`Resolve failed: ${JSON.stringify(resolve.data)}`);
@@ -134,7 +134,7 @@ async function main() {
       escrowSettlementStatus: updated.escrowSettlementStatus,
       escrowStatus: updated.escrowStatus,
       refundAmountPkr: updated.refundAmountPkr,
-      damageDeductionPkr: updated.damageDeductionPkr,
+      sellerPayoutPkr: updated.sellerPayoutPkr,
     });
 
     if (updated.escrowSettlementStatus !== "admin_settled" || updated.escrowStatus !== "released") {

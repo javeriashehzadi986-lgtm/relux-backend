@@ -9,6 +9,7 @@ function initMessageSocket(io) {
     if (!socket.user) return;
 
     const userId = String(socket.user._id);
+    // user:{id} room is joined in initUserRooms; keep this as a safety join.
     socket.join(`user:${userId}`);
 
     socket.on("conversation:join", async ({ conversationId }) => {

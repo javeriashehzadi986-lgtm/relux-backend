@@ -13,12 +13,51 @@ function calculateRentalEscrow(order, product, overrides = {}) {
   const deliveryChargesPkr = Math.max(0, Math.round(Number(order.deliveryChargesPkr) || 0));
   let deposit = Math.max(0, Math.round(Number(order.itemAmountPkr) || 0));
   if (!deposit) {
-    const totalPaid = Math.max(0, Math.round(Number(order.amountPkr) || 0));
+    const totalPaidFallback = Math.max(0, Math.round(Number(order.amountPkr) || 0));
     deposit =
-      totalPaid > deliveryChargesPkr ? totalPaid - deliveryChargesPkr : totalPaid || 0;
+      totalPaidFallback > deliveryChargesPkr
+        ? totalPaidFallback - deliveryChargesPkr
+        : totalPaidFallback || 0;
   }
   if (!deposit) {
     deposit = parseAmount(product?.itemPrice);
+  }
+
+  const totalPaidPkr =
+    Math.max(0, Math.round(Number(order.amountPkr) || 0)) || deposit + deliveryChargesPkr;
+
+  // Admin dispute / manual split — same model as resale disputes.
+  // Admin enters seller payout + buyer refund directly against total paid.
+  if (
+    overrides.sellerPayoutPkr !== undefined ||
+    overrides.refundAmountPkr !== undefined
+  ) {
+    const sellerPayoutPkr =
+      overrides.sellerPayoutPkr !== undefined
+        ? Math.max(0, Math.round(Number(overrides.sellerPayoutPkr) || 0))
+        : Math.max(
+            0,
+            totalPaidPkr - Math.max(0, Math.round(Number(overrides.refundAmountPkr) || 0)),
+          );
+    const refundAmountPkr =
+      overrides.refundAmountPkr !== undefined
+        ? Math.max(0, Math.round(Number(overrides.refundAmountPkr) || 0))
+        : Math.max(0, totalPaidPkr - sellerPayoutPkr);
+
+    return {
+      depositPkr: deposit,
+      deliveryChargesPkr,
+      totalPaidPkr,
+      rentalChargePkr: 0,
+      damageDeductionPkr: 0,
+      lateFeePkr: 0,
+      totalDeductionsPkr: sellerPayoutPkr,
+      refundAmountPkr,
+      sellerPayoutPkr,
+      additionalChargePkr: 0,
+      exceedsTotal: sellerPayoutPkr + refundAmountPkr > totalPaidPkr,
+      manualSplit: true,
+    };
   }
 
   const dailyRate = parseAmount(product?.rentPrice);
@@ -49,6 +88,7 @@ function calculateRentalEscrow(order, product, overrides = {}) {
   return {
     depositPkr: deposit,
     deliveryChargesPkr,
+    totalPaidPkr,
     rentalChargePkr,
     damageDeductionPkr,
     lateFeePkr,
@@ -56,6 +96,8 @@ function calculateRentalEscrow(order, product, overrides = {}) {
     refundAmountPkr,
     sellerPayoutPkr,
     additionalChargePkr,
+    exceedsTotal: false,
+    manualSplit: false,
   };
 }
 
@@ -144,8 +186,8 @@ function getSaleEscrowLabel(order) {
     if (refundPart > 0 && sellerPart > 0) {
       return `PKR ${refundPart.toLocaleString("en-PK")} refunded, PKR ${sellerPart.toLocaleString("en-PK")} released to seller`;
     }
-    if (refundPart > 0) {
-      return `PKR ${refundPart.toLocaleString("en-PK")} refunded to buyer`;
+    if (refundPart > 0 && sellerPart <= 0) {
+      return `Dispute resolved — PKR ${refundPart.toLocaleString("en-PK")} refunded to buyer (no seller payout)`;
     }
     if (sellerPart > 0) {
       return `PKR ${sellerPart.toLocaleString("en-PK")} released to seller`;
@@ -171,14 +213,22 @@ function getEscrowLabel(order) {
     return "Awaiting seller confirmation of return";
   }
   if (settlement === "disputed") {
-    return "Return dispute — admin review required";
+    return "Dispute — admin review required";
   }
   if (settlement === "accepted" || settlement === "admin_settled") {
     if (order.escrowStatus === "released") {
-      if (order.refundAmountPkr > 0) {
-        return `PKR ${order.refundAmountPkr.toLocaleString("en-PK")} refunded to buyer`;
+      const refund = Number(order.refundAmountPkr) || 0;
+      const payout = Number(order.sellerPayoutPkr) || 0;
+      if (refund > 0 && payout > 0) {
+        return `PKR ${refund.toLocaleString("en-PK")} refunded to buyer, PKR ${payout.toLocaleString("en-PK")} paid to seller`;
       }
-      return "Escrow settled (rental charges applied)";
+      if (refund > 0 && payout <= 0) {
+        return `Dispute resolved — PKR ${refund.toLocaleString("en-PK")} refunded to buyer (no seller payout)`;
+      }
+      if (payout > 0) {
+        return `PKR ${payout.toLocaleString("en-PK")} paid to seller`;
+      }
+      return "Escrow settled";
     }
     return "Return confirmed — releasing escrow";
   }
@@ -188,10 +238,18 @@ function getEscrowLabel(order) {
     return `PKR ${(order.amountPkr || 0).toLocaleString("en-PK")} held in escrow`;
   }
   if (status === "released") {
-    if (order.refundAmountPkr > 0) {
-      return `PKR ${order.refundAmountPkr.toLocaleString("en-PK")} refunded to buyer`;
+    const refund = Number(order.refundAmountPkr) || 0;
+    const payout = Number(order.sellerPayoutPkr) || 0;
+    if (refund > 0 && payout > 0) {
+      return `PKR ${refund.toLocaleString("en-PK")} refunded to buyer, PKR ${payout.toLocaleString("en-PK")} paid to seller`;
     }
-    return "Escrow settled (rental charges applied)";
+    if (refund > 0 && payout <= 0) {
+      return `PKR ${refund.toLocaleString("en-PK")} refunded to buyer (no seller payout)`;
+    }
+    if (payout > 0) {
+      return `PKR ${payout.toLocaleString("en-PK")} paid to seller`;
+    }
+    return "Escrow settled";
   }
   if (status === "failed") {
     return "Escrow refund failed — contact support";
@@ -206,14 +264,25 @@ function formatPkr(amount) {
 function buildSettlementSummary(order, product, overrides = {}) {
   const breakdown = calculateRentalEscrow(order, product, overrides);
   return {
+    orderType: "rental",
     depositPkr: breakdown.depositPkr,
+    deliveryChargesPkr: breakdown.deliveryChargesPkr,
+    totalPaidPkr: breakdown.totalPaidPkr,
+    itemAmountPkr: order.itemAmountPkr || breakdown.depositPkr,
     rentalChargePkr: breakdown.rentalChargePkr,
     damageDeductionPkr: breakdown.damageDeductionPkr,
     lateFeePkr: breakdown.lateFeePkr,
     totalDeductionsPkr: breakdown.totalDeductionsPkr,
-    refundAmountPkr: breakdown.refundAmountPkr,
-    sellerPayoutPkr: breakdown.sellerPayoutPkr,
+    refundAmountPkr:
+      order.escrowStatus === "released"
+        ? order.refundAmountPkr || breakdown.refundAmountPkr
+        : breakdown.refundAmountPkr,
+    sellerPayoutPkr:
+      order.escrowStatus === "released"
+        ? order.sellerPayoutPkr || breakdown.sellerPayoutPkr
+        : breakdown.sellerPayoutPkr,
     additionalChargePkr: breakdown.additionalChargePkr,
+    exceedsTotal: Boolean(breakdown.exceedsTotal),
     escrowSettlementStatus: order.escrowSettlementStatus || "none",
     settlementNote: order.settlementNote || "",
     settlementEvidence: order.settlementEvidence || [],
@@ -331,18 +400,31 @@ async function releaseRentalEscrow(order, overrides = {}) {
 
   const breakdown = calculateRentalEscrow(order, product, overrides);
 
+  if (breakdown.exceedsTotal) {
+    throw new Error(
+      "Seller payout and buyer refund cannot exceed the total amount paid",
+    );
+  }
+
   if (breakdown.additionalChargePkr > 0) {
     throw new Error(
       "Total deductions exceed the deposit. Admin must cap damage/rent or collect additional payment before release.",
     );
   }
 
-  order.rentalChargePkr = breakdown.rentalChargePkr;
-  order.damageDeductionPkr = breakdown.damageDeductionPkr;
-  order.lateFeePkr = breakdown.lateFeePkr;
+  order.rentalChargePkr = breakdown.manualSplit ? 0 : breakdown.rentalChargePkr;
+  order.damageDeductionPkr = breakdown.manualSplit ? 0 : breakdown.damageDeductionPkr;
+  order.lateFeePkr = breakdown.manualSplit ? 0 : breakdown.lateFeePkr;
   order.refundAmountPkr = breakdown.refundAmountPkr;
   order.sellerPayoutPkr = breakdown.sellerPayoutPkr;
-  order.returnConfirmedAt = new Date();
+  // Only stamp return confirmation for actual return flows — not delivery disputes.
+  if (
+    order.fulfillmentStatus === "returned" ||
+    order.deliveryConfirmedAt ||
+    (!breakdown.manualSplit && breakdown.sellerPayoutPkr > 0)
+  ) {
+    order.returnConfirmedAt = order.returnConfirmedAt || new Date();
+  }
 
   let stripeRefundId = "";
   let stripeTransferId = "";
@@ -379,7 +461,8 @@ async function releaseRentalEscrow(order, overrides = {}) {
       if (!order.refundedAt) {
         order.refundedAt = new Date();
       }
-      if (breakdown.refundAmountPkr >= breakdown.depositPkr) {
+      const paidTotal = breakdown.totalPaidPkr || breakdown.depositPkr;
+      if (breakdown.refundAmountPkr >= paidTotal) {
         order.paymentStatus = "refunded";
       }
     }

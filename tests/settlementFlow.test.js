@@ -138,13 +138,14 @@ describe("Settlement Flow — propose, accept, dispute, admin resolve", () => {
     expect(res.statusCode).toBe(410);
   });
 
-  it("SF-05: admin resolves disputed settlement and releases escrow", async () => {
+  it("SF-05: admin resolves disputed settlement with manual payout split", async () => {
     const order = buildRentalOrder({
       escrowSettlementStatus: "disputed",
-      rentalChargePkr: 15000,
-      damageDeductionPkr: 8000,
-      disputeReportId: new mongoose.Types.ObjectId(),
+      deliveryConfirmedAt: new Date(),
       returnConfirmedAt: new Date(),
+      disputeReportId: new mongoose.Types.ObjectId(),
+      itemAmountPkr: 50000,
+      deliveryChargesPkr: 0,
     });
     Order.findById = jest.fn().mockReturnValue(mockFindByIdWithPopulate(order));
     Report.findById = jest.fn().mockResolvedValue({
@@ -160,22 +161,25 @@ describe("Settlement Flow — propose, accept, dispute, admin resolve", () => {
       refundAmountPkr: 35000,
       sellerPayoutPkr: 15000,
       damageDeductionPkr: 0,
+      rentalChargePkr: 0,
+      toSellerJSON: jest.fn().mockReturnValue({ id: String(order._id) }),
     };
     releaseRentalEscrow.mockResolvedValue({
       order: releasedOrder,
       refundAmountPkr: 35000,
-      rentalChargePkr: 15000,
+      rentalChargePkr: 0,
       damageDeductionPkr: 0,
       sellerPayoutPkr: 15000,
+      stripeTransferId: "tr_test",
     });
 
     const req = mockReq({
       user: { _id: new mongoose.Types.ObjectId(), role: "admin" },
       params: { id: String(order._id) },
       body: {
-        rentalChargePkr: 15000,
-        damageDeductionPkr: 0,
-        decision: "Admin reduced damage to zero after review",
+        sellerPayoutPkr: 15000,
+        refundAmountPkr: 35000,
+        decision: "Admin split: PKR 15,000 to seller, PKR 35,000 refunded to buyer",
       },
     });
     const res = mockRes();
@@ -184,7 +188,13 @@ describe("Settlement Flow — propose, accept, dispute, admin resolve", () => {
 
     expect(res.statusCode).toBe(200);
     expect(order.escrowSettlementStatus).toBe("admin_settled");
-    expect(releaseRentalEscrow).toHaveBeenCalled();
+    expect(releaseRentalEscrow).toHaveBeenCalledWith(
+      order,
+      expect.objectContaining({
+        sellerPayoutPkr: 15000,
+        refundAmountPkr: 35000,
+      }),
+    );
     expect(res.body.message).toMatch(/admin settlement/i);
   });
 

@@ -69,6 +69,26 @@ describe("Escrow Service — Chapter 5: Rental Payment Hold & Release", () => {
       expect(result.refundAmountPkr).toBe(39000);
       expect(result.sellerPayoutPkr).toBe(11000);
     });
+
+    it("TC-ES-03c: admin dispute uses manual seller payout + buyer refund", () => {
+      const result = calculateRentalEscrow(
+        {
+          amountPkr: 50300,
+          itemAmountPkr: 50000,
+          deliveryChargesPkr: 300,
+          rentalDays: 3,
+        },
+        { rentPrice: "2000" },
+        { sellerPayoutPkr: 15000, refundAmountPkr: 35300 },
+      );
+      expect(result.manualSplit).toBe(true);
+      expect(result.totalPaidPkr).toBe(50300);
+      expect(result.sellerPayoutPkr).toBe(15000);
+      expect(result.refundAmountPkr).toBe(35300);
+      expect(result.rentalChargePkr).toBe(0);
+      expect(result.damageDeductionPkr).toBe(0);
+      expect(result.exceedsTotal).toBe(false);
+    });
   });
 
   describe("getEscrowLabel", () => {

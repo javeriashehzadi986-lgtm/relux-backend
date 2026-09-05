@@ -317,51 +317,61 @@ async function adminResolveSettlement(req, res) {
 
     if (order.escrowSettlementStatus !== "disputed") {
       return res.status(400).json({
-        message: "Only disputed return issues can be resolved by admin",
+        message: "Only disputed rental orders can be resolved by admin",
       });
     }
 
     assertEscrowHeld(order);
 
-    // Return-stage disputes wait for seller return confirmation.
-    // Delivery-stage disputes (shipped, not returned) can be resolved without it.
-    const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
-    const isReturnStageDispute = fs === FULFILLMENT.RETURNED;
-    if (isReturnStageDispute && !order.returnConfirmedAt) {
-      return res.status(400).json({
-        message:
-          "Seller has not confirmed receiving the returned product yet. Wait for return confirmation before releasing escrow.",
-      });
+    // Allow retry after a failed Stripe/refund attempt (same as sale disputes).
+    if (order.escrowStatus === "failed") {
+      order.escrowStatus = "held";
     }
 
     const {
-      rentalChargePkr,
-      damageDeductionPkr,
-      lateFeePkr,
+      sellerPayoutPkr,
+      refundAmountPkr,
       adminSettlementNote,
       decision,
       resolveReport,
     } = req.body;
 
     const overrides = {};
-    if (rentalChargePkr !== undefined) overrides.rentalChargePkr = rentalChargePkr;
-    if (damageDeductionPkr !== undefined) overrides.damageDeductionPkr = damageDeductionPkr;
-    if (lateFeePkr !== undefined) overrides.lateFeePkr = lateFeePkr;
+    if (sellerPayoutPkr !== undefined) overrides.sellerPayoutPkr = sellerPayoutPkr;
+    if (refundAmountPkr !== undefined) overrides.refundAmountPkr = refundAmountPkr;
+
+    if (
+      overrides.sellerPayoutPkr === undefined &&
+      overrides.refundAmountPkr === undefined
+    ) {
+      return res.status(400).json({
+        message: "Enter seller payout and/or buyer refund amounts",
+      });
+    }
 
     const product = order.productId;
     const breakdown = calculateRentalEscrow(order, product, overrides);
 
-    if (breakdown.additionalChargePkr > 0) {
+    if (breakdown.exceedsTotal) {
       return res.status(400).json({
-        message:
-          "Admin settlement cannot exceed the deposit. Cap rent or damage so total deductions fit within the deposit.",
-        settlement: breakdown,
+        message: "Seller payout and buyer refund cannot exceed the total paid amount",
+        settlement: buildSettlementSummary(order, product, overrides),
       });
     }
 
-    order.rentalChargePkr = breakdown.rentalChargePkr;
-    order.damageDeductionPkr = breakdown.damageDeductionPkr;
-    order.lateFeePkr = breakdown.lateFeePkr;
+    // Paying the seller requires buyer receipt confirmation (same as resale disputes).
+    // Full/partial buyer refunds are allowed without it (e.g. item not received).
+    if (breakdown.sellerPayoutPkr > 0 && !order.deliveryConfirmedAt) {
+      return res.status(400).json({
+        message:
+          "Buyer has not confirmed receipt yet. Set seller payout to 0 and refund the buyer, or wait for delivery confirmation.",
+        settlement: buildSettlementSummary(order, product, overrides),
+      });
+    }
+
+    order.rentalChargePkr = 0;
+    order.damageDeductionPkr = 0;
+    order.lateFeePkr = 0;
     order.refundAmountPkr = breakdown.refundAmountPkr;
     order.sellerPayoutPkr = breakdown.sellerPayoutPkr;
     order.adminSettlementNote = String(adminSettlementNote || decision || "").trim();
@@ -393,7 +403,7 @@ async function adminResolveSettlement(req, res) {
       productTitle: product?.title ?? "rental item",
       orderId: order._id,
       refundLabel: formatPkr(result.refundAmountPkr),
-      rentalChargeLabel: formatPkr(result.rentalChargePkr),
+      rentalChargeLabel: formatPkr(result.sellerPayoutPkr),
       sellerPayoutLabel: formatPkr(result.sellerPayoutPkr),
       transferSent: Boolean(result.stripeTransferId),
     });
@@ -403,7 +413,10 @@ async function adminResolveSettlement(req, res) {
     res.json({
       message: "Escrow released with admin settlement",
       order: result.order.toSellerJSON(),
-      settlement: buildSettlementSummary(result.order, product),
+      settlement: buildSettlementSummary(result.order, product, {
+        sellerPayoutPkr: result.sellerPayoutPkr,
+        refundAmountPkr: result.refundAmountPkr,
+      }),
     });
   } catch (error) {
     res.status(400).json({ message: error.message || getErrorMessage(error) });

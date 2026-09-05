@@ -325,6 +325,12 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   };
 
   if (this.status === "cancelled" || this.status === "rejected") {
+    const wasDisputeRefund =
+      this.status === "cancelled" &&
+      this.escrowSettlementStatus === "admin_settled" &&
+      (Number(this.refundAmountPkr) || 0) > 0 &&
+      (Number(this.sellerPayoutPkr) || 0) <= 0;
+
     return {
       id,
       orderId: this.orderId,
@@ -338,7 +344,11 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
       rentStart: this.rentStart,
       rentEnd: this.rentEnd,
       status: "cancelled",
-      statusLabel: "Cancelled",
+      statusLabel: wasDisputeRefund
+        ? "Cancelled — refunded"
+        : this.status === "rejected"
+          ? "Rejected"
+          : "Cancelled",
       ...payment,
       meta:
         this.type === "rental" && this.rentStart
@@ -773,7 +783,14 @@ orderSchema.methods.toSellerJSON = function toSellerJSON() {
 
   return {
     ...base,
-    status: this.status === "rejected" ? "Rejected" : "Cancelled",
+    status:
+      this.status === "rejected"
+        ? "Rejected"
+        : this.escrowSettlementStatus === "admin_settled" &&
+            (Number(this.refundAmountPkr) || 0) > 0 &&
+            (Number(this.sellerPayoutPkr) || 0) <= 0
+          ? "Cancelled — buyer refunded"
+          : "Cancelled",
     statusVariant: "completed",
     dateIcon: "calendar",
     actions: [{ id: "details", label: "View Details", variant: "outline", link: true }],

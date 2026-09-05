@@ -7,6 +7,7 @@ const { Server } = require("socket.io");
 const connectDB = require("./config/db");
 const { setIO } = require("./socket/io");
 const { attachOptionalUser } = require("./socket/authMiddleware");
+const { initUserRooms } = require("./socket/userRoomSocket");
 const { initMessageSocket } = require("./socket/messageSocket");
 const { initBidSocket } = require("./socket/bidSocket");
 const authRoutes = require("./routes/authRoutes");
@@ -52,6 +53,7 @@ const io = new Server(server, {
 
 setIO(io);
 io.use(attachOptionalUser);
+initUserRooms(io);
 initMessageSocket(io);
 initBidSocket(io);
 

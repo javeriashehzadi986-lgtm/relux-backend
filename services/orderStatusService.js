@@ -160,8 +160,8 @@ function getPaymentLabel(order) {
     if (refund > 0 && payout > 0) {
       return `Settled — ${formatPkrShort(refund)} refunded, ${formatPkrShort(payout)} to seller`;
     }
-    if (refund > 0) {
-      return `Settled — ${formatPkrShort(refund)} refunded to buyer`;
+    if (refund > 0 && payout <= 0) {
+      return `Settled — ${formatPkrShort(refund)} refunded to buyer (no seller payout)`;
     }
     if (payout > 0) {
       return `Settled — ${formatPkrShort(payout)} paid to seller`;
@@ -204,6 +204,32 @@ async function finalizeOrderAfterEscrowRelease(order) {
   if (order.escrowStatus !== "released") return null;
 
   syncPaymentStatusAfterEscrowRelease(order);
+
+  const sellerPayout = Math.max(0, Math.round(Number(order.sellerPayoutPkr) || 0));
+  const refundAmount = Math.max(0, Math.round(Number(order.refundAmountPkr) || 0));
+  const isAdminDisputeSettle = order.escrowSettlementStatus === "admin_settled";
+  const neverDelivered = !order.deliveryConfirmedAt;
+
+  // Delivery-dispute style settle: admin refunded buyer, seller got nothing, item never
+  // confirmed received. This is NOT a completed rental/sale — cancel it so profiles
+  // don't show "Rental Completed" / fake return / seller earnings.
+  if (isAdminDisputeSettle && neverDelivered && sellerPayout <= 0 && refundAmount > 0) {
+    order.status = "cancelled";
+    if (
+      order.fulfillmentStatus === FULFILLMENT.RETURNED ||
+      order.fulfillmentStatus === FULFILLMENT.DELIVERED
+    ) {
+      order.fulfillmentStatus = order.shippedAt
+        ? FULFILLMENT.SHIPPED
+        : FULFILLMENT.PROCESSING;
+    }
+    // Clear false return stamp from older release path.
+    if (!order.sellerConfirmedReturnAt) {
+      order.returnConfirmedAt = null;
+    }
+    await order.save();
+    return syncProductForOrder(order);
+  }
 
   if (order.type === "rental") {
     if (order.fulfillmentStatus !== FULFILLMENT.RETURNED) {
