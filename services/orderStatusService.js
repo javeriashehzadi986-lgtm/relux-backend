@@ -11,17 +11,18 @@ function isRentalPeriodComplete(rentEnd) {
   if (!rentEnd) return false;
   const today = new Date();
   today.setHours(0, 0, 0, 0);
-  const end = new Date(`${rentEnd}T12:00:00`);
+  const end = new Date(`${String(rentEnd).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(end.getTime())) return false;
   end.setHours(0, 0, 0, 0);
-  return today > end;
+  // Inclusive of rent end day — buyer can mark return once the rental period ends.
+  return today >= end;
 }
 
 function getReturnAvailableLabel(rentEnd) {
   if (!rentEnd) return "Return available after rental ends";
-  const end = new Date(`${rentEnd}T12:00:00`);
-  const available = new Date(end);
-  available.setDate(available.getDate() + 1);
-  return `Available from ${available.toLocaleDateString("en-US", {
+  const end = new Date(`${String(rentEnd).slice(0, 10)}T12:00:00`);
+  if (Number.isNaN(end.getTime())) return "Return available after rental ends";
+  return `Available from ${end.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     year: "numeric",
@@ -171,9 +172,6 @@ function getPaymentLabel(order) {
   if (order.escrowStatus === "held") {
     if (order.escrowSettlementStatus === "disputed") {
       return "Paid — held (dispute under review)";
-    }
-    if (order.escrowSettlementStatus === "proposed") {
-      return "Paid — settlement proposed";
     }
     return "Paid — held in escrow";
   }

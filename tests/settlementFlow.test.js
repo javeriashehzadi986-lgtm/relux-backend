@@ -96,66 +96,23 @@ describe("Settlement Flow — propose, accept, dispute, admin resolve", () => {
     User.findById = jest.fn().mockReturnValue(mockFindByIdWithSelect({ name: "Seller One" }));
   });
 
-  it("SF-01: seller proposes settlement with rent and damage", async () => {
+  it("SF-01: seller propose settlement endpoint is retired", async () => {
     const order = buildRentalOrder();
-    Order.findOne = jest.fn().mockReturnValue(mockFindOneWithPopulate(order));
-
     const req = mockReq({
       user: { _id: order.sellerId, role: "seller" },
       params: { id: String(order._id) },
-      body: { damageDeductionPkr: 3000, settlementNote: "Minor stain on hem" },
+      body: { damageDeductionPkr: 3000 },
     });
     const res = mockRes();
 
     await proposeSettlement(req, res);
 
-    expect(res.statusCode).toBe(200);
-    expect(order.escrowSettlementStatus).toBe("proposed");
-    expect(order.damageDeductionPkr).toBe(3000);
-    expect(order.rentalChargePkr).toBe(15000);
-    expect(order.refundAmountPkr).toBe(32000);
-    expect(order.sellerPayoutPkr).toBe(18000);
-    expect(order.save).toHaveBeenCalled();
+    expect(res.statusCode).toBe(410);
+    expect(res.body.message).toMatch(/no longer used/i);
   });
 
-  it("SF-02: rejects proposal when damage exceeds deposit cap", async () => {
-    const order = buildRentalOrder();
-    Order.findOne = jest.fn().mockReturnValue(mockFindOneWithPopulate(order));
-
-    const req = mockReq({
-      user: { _id: order.sellerId, role: "seller" },
-      params: { id: String(order._id) },
-      body: { damageDeductionPkr: 50000 },
-    });
-    const res = mockRes();
-
-    await proposeSettlement(req, res);
-
-    expect(res.statusCode).toBe(400);
-    expect(res.body.message).toMatch(/cannot exceed the security deposit/i);
-  });
-
-  it("SF-03: buyer accepts proposed settlement and releases escrow", async () => {
-    const order = buildRentalOrder({
-      escrowSettlementStatus: "proposed",
-      rentalChargePkr: 15000,
-      damageDeductionPkr: 3000,
-      refundAmountPkr: 32000,
-      sellerPayoutPkr: 18000,
-    });
-    Order.findOne = jest.fn().mockReturnValue(mockFindOneWithPopulate(order));
-
-    const releasedOrder = { ...order, escrowStatus: "released", escrowSettlementStatus: "accepted" };
-    releaseRentalEscrow.mockResolvedValue({
-      order: releasedOrder,
-      refundAmountPkr: 32000,
-      rentalChargePkr: 15000,
-      damageDeductionPkr: 3000,
-      sellerPayoutPkr: 18000,
-      stripeRefundId: "",
-      demoMode: true,
-    });
-
+  it("SF-02: buyer accept settlement endpoint is retired", async () => {
+    const order = buildRentalOrder({ escrowSettlementStatus: "proposed" });
     const req = mockReq({
       user: { _id: order.buyerId, role: "buyer" },
       params: { id: String(order._id) },
@@ -164,37 +121,21 @@ describe("Settlement Flow — propose, accept, dispute, admin resolve", () => {
 
     await acceptSettlement(req, res);
 
-    expect(res.statusCode).toBe(200);
-    expect(order.escrowSettlementStatus).toBe("accepted");
-    expect(releaseRentalEscrow).toHaveBeenCalledWith(order);
-    expect(res.body.escrow.refundAmountPkr).toBe(32000);
-    expect(res.body.escrow.sellerPayoutPkr).toBe(18000);
+    expect(res.statusCode).toBe(410);
   });
 
-  it("SF-04: buyer disputes settlement and creates linked report", async () => {
-    const order = buildRentalOrder({
-      escrowSettlementStatus: "proposed",
-      rentalChargePkr: 15000,
-      damageDeductionPkr: 8000,
-      refundAmountPkr: 27000,
-      sellerPayoutPkr: 23000,
-    });
-    Order.findOne = jest.fn().mockReturnValue(mockFindOneWithPopulate(order));
-    Product.findById = jest.fn().mockReturnValue(mockFindByIdWithSelect(order.productId));
-
+  it("SF-03: buyer dispute settlement endpoint is retired", async () => {
+    const order = buildRentalOrder({ escrowSettlementStatus: "proposed" });
     const req = mockReq({
-      user: { _id: order.buyerId, role: "buyer", name: "Buyer One" },
+      user: { _id: order.buyerId, role: "buyer" },
       params: { id: String(order._id) },
-      body: { disputeReason: "Damage charge is too high for a minor mark" },
+      body: { disputeReason: "too high" },
     });
     const res = mockRes();
 
     await disputeSettlement(req, res);
 
-    expect(res.statusCode).toBe(200);
-    expect(order.escrowSettlementStatus).toBe("disputed");
-    expect(Report.create).toHaveBeenCalled();
-    expect(order.disputeReason).toMatch(/too high/i);
+    expect(res.statusCode).toBe(410);
   });
 
   it("SF-05: admin resolves disputed settlement and releases escrow", async () => {

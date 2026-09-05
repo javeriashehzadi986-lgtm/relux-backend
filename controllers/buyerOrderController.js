@@ -11,7 +11,6 @@ const {
 const {
   FULFILLMENT,
   ensurePaid,
-  isRentalPeriodComplete,
 } = require("../services/orderStatusService");
 const { releaseSaleEscrow } = require("../services/escrowService");
 
@@ -101,6 +100,9 @@ async function createRentalRequest(req, res) {
       sellerId: product.sellerId,
       productTitle: product.title,
       orderId: order._id,
+      rentalDays,
+      rentStart,
+      rentEnd,
     });
 
     res.status(201).json({
@@ -323,12 +325,7 @@ async function markReturnedOrder(req, res) {
     const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
     if (fs !== FULFILLMENT.DELIVERED) {
       return res.status(400).json({
-        message: "Confirm receipt before marking the item as returned",
-      });
-    }
-    if (!isRentalPeriodComplete(order.rentEnd)) {
-      return res.status(400).json({
-        message: "You can mark the item as returned only after the rental period ends",
+        message: "Confirm that you received the order before marking it as returned",
       });
     }
 

@@ -6,13 +6,19 @@ const {
   notifyBookingRejected,
   notifyRentalCompleted,
   notifyBuyerOrderShipped,
+  notifySellerConfirmedReturn,
+  notifyEscrowReleased,
 } = require("../services/notificationService");
 const {
   FULFILLMENT,
   ensurePaid,
   syncProductForOrder,
 } = require("../services/orderStatusService");
-const { SALE_AUTO_RELEASE_MS } = require("../services/escrowService");
+const {
+  SALE_AUTO_RELEASE_MS,
+  releaseRentalEscrow,
+  formatPkr,
+} = require("../services/escrowService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -237,10 +243,90 @@ async function shipOrder(req, res) {
   }
 }
 
+async function confirmReturnReceived(req, res) {
+  try {
+    const order = await Order.findOne({
+      _id: req.params.id,
+      sellerId: req.user._id,
+      type: "rental",
+    }).populate("productId", "title itemPrice rentPrice");
+
+    if (!order) {
+      return res.status(404).json({ message: "Rental order not found" });
+    }
+    if (order.status !== "approved") {
+      return res.status(400).json({ message: "Only active rentals can confirm a return" });
+    }
+    ensurePaid(order);
+
+    const fs = order.fulfillmentStatus || FULFILLMENT.PROCESSING;
+    if (fs !== FULFILLMENT.RETURNED) {
+      return res.status(400).json({
+        message: "Buyer must mark the item as returned before you can confirm it",
+      });
+    }
+
+    if (order.escrowSettlementStatus === "disputed") {
+      return res.status(400).json({
+        message: "This return is under admin dispute review. Escrow cannot be released here.",
+      });
+    }
+
+    if (order.escrowStatus === "released") {
+      return res.json({
+        message: "Return already confirmed and escrow released",
+        order: order.toSellerJSON(),
+      });
+    }
+
+    order.sellerConfirmedReturnAt = order.sellerConfirmedReturnAt || new Date();
+    order.returnConfirmedAt = order.returnConfirmedAt || new Date();
+    order.escrowSettlementStatus = "accepted";
+    order.settlementAcceptedAt = new Date();
+    order.damageDeductionPkr = 0;
+    order.lateFeePkr = 0;
+    await order.save();
+
+    const product = order.productId;
+    const result = await releaseRentalEscrow(order, {
+      damageDeductionPkr: 0,
+      lateFeePkr: 0,
+    });
+
+    notifySellerConfirmedReturn({
+      buyerId: order.buyerId,
+      productTitle: product?.title ?? "your rental item",
+      orderId: order._id,
+    });
+
+    notifyEscrowReleased({
+      buyerId: order.buyerId,
+      sellerId: order.sellerId,
+      productTitle: product?.title ?? "rental item",
+      orderId: order._id,
+      refundLabel: formatPkr(result.refundAmountPkr),
+      rentalChargeLabel: formatPkr(result.rentalChargePkr),
+      sellerPayoutLabel: formatPkr(result.sellerPayoutPkr),
+      transferSent: Boolean(result.stripeTransferId),
+    });
+
+    res.json({
+      message:
+        result.refundAmountPkr > 0
+          ? `Return confirmed — escrow released. ${formatPkr(result.refundAmountPkr)} refunded to buyer.`
+          : "Return confirmed — escrow released to seller.",
+      order: result.order.toSellerJSON(),
+    });
+  } catch (error) {
+    res.status(400).json({ message: error.message || getErrorMessage(error) });
+  }
+}
+
 module.exports = {
   getMySellerOrders,
   approveOrder,
   rejectOrder,
   completeOrder,
   shipOrder,
+  confirmReturnReceived,
 };

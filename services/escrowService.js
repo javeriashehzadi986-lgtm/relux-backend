@@ -156,10 +156,10 @@ function getEscrowLabel(order) {
 
   const settlement = order.escrowSettlementStatus || "none";
   if (settlement === "proposed") {
-    return "Settlement proposed — awaiting buyer review";
+    return "Awaiting seller confirmation of return";
   }
   if (settlement === "disputed") {
-    return "Settlement disputed — admin review required";
+    return "Return dispute — admin review required";
   }
   if (settlement === "accepted" || settlement === "admin_settled") {
     if (order.escrowStatus === "released") {
@@ -168,7 +168,7 @@ function getEscrowLabel(order) {
       }
       return "Escrow settled (rental charges applied)";
     }
-    return "Settlement approved — releasing escrow";
+    return "Return confirmed — releasing escrow";
   }
 
   const status = order.escrowStatus || "none";
@@ -300,7 +300,9 @@ async function releaseRentalEscrow(order, overrides = {}) {
     order.escrowSettlementStatus &&
     !allowedSettlement.includes(order.escrowSettlementStatus)
   ) {
-    throw new Error("Escrow can only be released after the buyer accepts or admin resolves the settlement");
+    throw new Error(
+      "Escrow can only be released after the seller confirms the return or admin resolves a dispute",
+    );
   }
 
   const product =
