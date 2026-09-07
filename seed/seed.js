@@ -11,13 +11,6 @@ const USERS = [
     role: "admin",
     status: "active",
   },
-  {
-    name: "Sarah Jenkins",
-    email: "sarah.jenkins@email.com",
-    password: "password123",
-    role: "buyer",
-    status: "active",
-  },
 ];
 
 async function seed() {
@@ -30,7 +23,6 @@ async function seed() {
 
   console.log("Auth users seeded");
   console.log("Admin: admin@reluxhub.com / admin123");
-  console.log("Buyer: sarah.jenkins@email.com / password123");
   process.exit(0);
 }
 
