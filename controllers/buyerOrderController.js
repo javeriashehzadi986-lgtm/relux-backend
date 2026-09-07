@@ -342,10 +342,10 @@ async function confirmReceivedOrder(req, res) {
     order.fulfillmentStatus = FULFILLMENT.DELIVERED;
     order.deliveryConfirmedAt = new Date();
 
+    // Buyer confirming receipt after a delivery dispute means they accept the item —
+    // clear the freeze so escrow can release to the seller.
     if (order.escrowSettlementStatus === "disputed") {
-      return res.status(400).json({
-        message: "Escrow is frozen while admin reviews your delivery dispute",
-      });
+      order.escrowSettlementStatus = "none";
     }
 
     if (order.type === "sale" && order.escrowStatus === "held") {

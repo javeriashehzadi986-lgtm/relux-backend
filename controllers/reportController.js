@@ -4,6 +4,7 @@ const Product = require("../models/Product");
 const User = require("../models/User");
 const { notifyReportResolved, notifyDisputeMediationRequested, notifyDisputePartyResponded } = require("../services/notificationService");
 const { emitReportUpdated } = require("../services/reportSocketService");
+const { emitOrderUpdated } = require("../services/orderSocketService");
 
 function getErrorMessage(error) {
   if (error.message?.includes("bad auth")) {
@@ -535,6 +536,23 @@ async function updateAdminReport(req, res) {
         subject: report.subject,
         decision: report.decision || report.adminReply,
       }).catch(() => {});
+
+      // If admin closed the support ticket without releasing escrow, unfreeze the
+      // order so the buyer can Confirm Received (or report again) once the item arrives.
+      if (report.orderId) {
+        const linkedOrder = await Order.findById(report.orderId);
+        const sameDispute =
+          linkedOrder &&
+          linkedOrder.escrowSettlementStatus === "disputed" &&
+          linkedOrder.escrowStatus === "held" &&
+          (!linkedOrder.disputeReportId ||
+            String(linkedOrder.disputeReportId) === String(report._id));
+        if (sameDispute) {
+          linkedOrder.escrowSettlementStatus = "none";
+          await linkedOrder.save();
+          emitOrderUpdated(linkedOrder);
+        }
+      }
     }
 
     emitReportUpdated(report).catch(() => {});

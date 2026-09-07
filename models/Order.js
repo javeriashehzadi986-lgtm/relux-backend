@@ -454,6 +454,13 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
         variant: "danger",
       });
     } else if (this.paymentStatus === "paid" && fs === FULFILLMENT.SHIPPED) {
+      // Always allow Confirm Received while shipped — even during a delivery dispute —
+      // so the buyer can accept the item once it arrives (closes dispute, releases escrow).
+      actions.push({
+        id: "confirm-received",
+        label: "Confirm Received",
+        variant: "primary",
+      });
       if (this.escrowSettlementStatus === "disputed") {
         actions.push({
           id: "dispute-pending",
@@ -462,23 +469,10 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
           disabled: true,
         });
       } else if (this.escrowStatus === "held") {
-        actions.push(
-          {
-            id: "confirm-received",
-            label: "Confirm Received",
-            variant: "primary",
-          },
-          {
-            id: "dispute-delivery",
-            label: "Report Delivery Issue",
-            variant: "outline",
-          },
-        );
-      } else {
         actions.push({
-          id: "confirm-received",
-          label: "Confirm Received",
-          variant: "primary",
+          id: "dispute-delivery",
+          label: "Report Delivery Issue",
+          variant: "outline",
         });
       }
     } else if (
