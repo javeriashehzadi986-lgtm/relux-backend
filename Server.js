@@ -39,6 +39,7 @@ const adminPaymentRoutes = require("./routes/adminPaymentRoutes");
 const stripeConnectRoutes = require("./routes/stripeConnectRoutes");
 const uploadRoutes = require("./routes/uploadRoutes");
 const { handleStripeWebhook } = require("./controllers/paymentController");
+const { setupSwagger } = require("./swagger/setup");
 
 const app = express();
 const server = http.createServer(app);
@@ -121,6 +122,8 @@ app.use("/api/admin/payments", adminPaymentRoutes);
 app.use("/api/seller/stripe", stripeConnectRoutes);
 app.use("/api/upload", uploadRoutes);
 
+setupSwagger(app);
+
 app.use((error, req, res, next) => {
   if (error?.type === "entity.too.large") {
     return res.status(413).json({
@@ -136,6 +139,7 @@ const startServer = async () => {
 
   server.listen(PORT, () => {
     console.log(`Auth server running on http://localhost:${PORT}`);
+    console.log(`Swagger docs: http://localhost:${PORT}/api-docs`);
     console.log("Socket.io enabled for real-time chat, auctions, orders, and support");
   });
 
