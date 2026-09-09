@@ -5,6 +5,7 @@ const {
   uploadListingImage,
   uploadVerificationImage,
   uploadSupportImage,
+  uploadCategoryImage,
 } = require("../controllers/uploadController");
 
 const router = express.Router();
@@ -45,6 +46,14 @@ router.post(
   protect,
   runUpload(imageUpload.single("file")),
   uploadSupportImage,
+);
+
+router.post(
+  "/category",
+  protect,
+  authorize("admin"),
+  runUpload(imageUpload.single("file")),
+  uploadCategoryImage,
 );
 
 module.exports = router;

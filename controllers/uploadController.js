@@ -42,8 +42,13 @@ async function uploadSupportImage(req, res) {
   return handleImageUpload(req, res, "support");
 }
 
+async function uploadCategoryImage(req, res) {
+  return handleImageUpload(req, res, "categories");
+}
+
 module.exports = {
   uploadListingImage,
   uploadVerificationImage,
   uploadSupportImage,
+  uploadCategoryImage,
 };

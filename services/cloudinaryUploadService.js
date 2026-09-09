@@ -4,6 +4,7 @@ const UPLOAD_FOLDERS = {
   listings: "relux/listings",
   verification: "relux/verification",
   support: "relux/support",
+  categories: "relux/categories",
 };
 
 function getUploadFolder(kind) {

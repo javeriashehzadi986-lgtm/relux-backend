@@ -64,9 +64,6 @@ const DEFAULT_SUBS = ["male", "female", "kids"].flatMap((parentSlug) =>
   getSharedSubsForParent(parentSlug).map((item) => ({ ...item, parentSlug })),
 );
 
-const PLACEHOLDER_IMAGE =
-  "https://lh3.googleusercontent.com/aida-public/AB6AXuB2L3I-cDT-SAbb8wlj0WN8JPJXqWgxnBrT6R8CYt3vZVetG4pVDlkvqJ2PNhFiU7E11IELJBlheSge3StWoTNBYefLoyfUgO8yw55_kmCpweSfyKaC5MxJPkKd68Y89J3EZ7Jb0bjDFQceN16v11DAQjLcYRKuddl9fbDmtp3ri5Cu60PdrAFq5T5z0o0vORXYCAhrnoDWYXMqyvdhEcTgtjibPxGYBAbwGzrguaqVBNAWHZhKfAU2j2Ez7tt4lRQDSKEMRKxcAe4";
-
 function getErrorMessage(error) {
   if (error.code === 11000) {
     return "A category with this slug already exists";
@@ -169,7 +166,6 @@ async function repairLegacyCategories() {
 
       if (!doc.icon) doc.icon = "category";
       if (!doc.iconVariant) doc.iconVariant = "primary-dim";
-      if (doc.type === "sub" && !doc.imageUrl) doc.imageUrl = PLACEHOLDER_IMAGE;
 
       await doc.save();
     } catch {
@@ -262,7 +258,6 @@ async function ensureDefaultCategories() {
           productStyleKey: item.productStyleKey,
           sortOrder: item.sortOrder,
           isActive: true,
-          imageUrl: PLACEHOLDER_IMAGE,
         });
       }
     }
@@ -442,7 +437,7 @@ async function listCategories(req, res) {
             mainSlug,
             sub.productStyleKey || inferStyleKeyFromName(sub.name),
           ),
-          image: sub.imageUrl || PLACEHOLDER_IMAGE,
+          image: sub.imageUrl || "",
         }))
         .sort(
           (a, b) =>
@@ -478,6 +473,9 @@ async function createCategory(req, res) {
     if (!["main", "sub"].includes(type)) {
       return res.status(400).json({ message: "Invalid category type" });
     }
+    if (type === "main" && !imageUrl?.trim()) {
+      return res.status(400).json({ message: "Image is required for a main category" });
+    }
 
     let slug = slugify(req.body.slug || name);
     if (type === "sub") {
@@ -504,10 +502,12 @@ async function createCategory(req, res) {
         if (type === "sub") {
           exists.parentSlug = parentSlug;
           exists.productStyleKey = resolvedStyleKey || exists.productStyleKey || "";
-          exists.imageUrl = imageUrl?.trim() || exists.imageUrl || PLACEHOLDER_IMAGE;
+          exists.imageUrl = imageUrl?.trim() || exists.imageUrl || "";
         } else {
           exists.icon = icon || exists.icon || "category";
           exists.iconVariant = iconVariant || exists.iconVariant || "primary-dim";
+          // Main categories always carry an admin-provided image (validated above).
+          exists.imageUrl = imageUrl.trim();
         }
         await exists.save();
         return res.status(201).json({
@@ -525,7 +525,8 @@ async function createCategory(req, res) {
       parentSlug: type === "sub" ? parentSlug : null,
       icon: icon || "category",
       iconVariant: iconVariant || "primary-dim",
-      imageUrl: imageUrl?.trim() || PLACEHOLDER_IMAGE,
+      // Main: admin-provided image (required + validated). Sub: optional, blank if none.
+      imageUrl: type === "main" ? imageUrl.trim() : imageUrl?.trim() || "",
       productStyleKey: resolvedStyleKey,
       sortOrder: Number(req.body.sortOrder) || 0,
     });
@@ -551,7 +552,13 @@ async function updateCategory(req, res) {
     }
     if (typeof req.body.icon === "string") doc.icon = req.body.icon.trim();
     if (typeof req.body.iconVariant === "string") doc.iconVariant = req.body.iconVariant;
-    if (typeof req.body.imageUrl === "string") doc.imageUrl = req.body.imageUrl.trim();
+    if (typeof req.body.imageUrl === "string") {
+      const nextImage = req.body.imageUrl.trim();
+      // A main category must always keep an image; ignore an empty value.
+      if (nextImage || doc.type !== "main") {
+        doc.imageUrl = nextImage;
+      }
+    }
     if (typeof req.body.productStyleKey === "string") {
       doc.productStyleKey = req.body.productStyleKey.trim();
     }
@@ -649,7 +656,7 @@ function buildSubcategoryList(mainSlug, dbSubs, subStats) {
         mainSlug,
         sub.productStyleKey || inferStyleKeyFromName(sub.name),
       ),
-      image: sub.imageUrl || PLACEHOLDER_IMAGE,
+      image: sub.imageUrl || "",
     }))
     .sort(
       (a, b) => (a.sortOrder || 0) - (b.sortOrder || 0) || a.name.localeCompare(b.name),
@@ -674,7 +681,7 @@ async function listPublicCategories(req, res) {
         title: `${item.name} Fashion`,
         subtitle: `Browse ${item.name.toLowerCase()} fashion on Relux Hub.`,
         to: `/category/${slug}`,
-        image: PLACEHOLDER_IMAGE,
+        image: "",
       };
       const stats = getStatsForMain(mainStats, slug);
       const mainSubs = subs.filter((sub) => resolveParentSlug(sub) === slug);
