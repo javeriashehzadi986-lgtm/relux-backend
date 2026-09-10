@@ -3,7 +3,7 @@ const { getStripe, getCurrency, toStripeUnitAmount } = require("./stripeService"
 const { transferSellerPayout } = require("./stripeConnectService");
 const { finalizeOrderAfterEscrowRelease } = require("./orderStatusService");
 
-const SALE_AUTO_RELEASE_MS = 48 * 60 * 60 * 1000;
+const SALE_AUTO_RELEASE_MS = 5 * 24 * 60 * 60 * 1000; // 5 days
 
 function parseAmount(value) {
   return Number(String(value ?? "").replace(/[^\d.]/g, "")) || 0;
@@ -186,7 +186,7 @@ function getSaleEscrowLabel(order) {
     if (fs === "shipped" && order.saleEscrowAutoReleaseAt) {
       const releaseAt = new Date(order.saleEscrowAutoReleaseAt);
       if (releaseAt > new Date()) {
-        return `PKR ${total.toLocaleString("en-PK")} held — confirm receipt or auto-releases in 48h`;
+        return `PKR ${total.toLocaleString("en-PK")} held — confirm receipt or auto-releases in 5 days`;
       }
       return `PKR ${total.toLocaleString("en-PK")} held — auto-release pending`;
     }

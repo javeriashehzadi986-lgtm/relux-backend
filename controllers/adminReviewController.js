@@ -155,17 +155,21 @@ async function updateReviewStatus(req, res) {
       });
     }
 
-    const review = await SellerReview.findById(req.params.id)
-      .populate("sellerId", "name email role")
-      .populate("userId", "name email")
-      .populate("productId", "title brand");
+    const updated = await SellerReview.findByIdAndUpdate(
+      req.params.id,
+      { $set: { status } },
+      { new: true, runValidators: true },
+    );
 
-    if (!review) {
+    if (!updated) {
       return res.status(404).json({ message: "Review not found" });
     }
 
-    review.status = status;
-    await review.save();
+    // Re-fetch with populated refs so the response always carries seller/product names.
+    const review = await SellerReview.findById(updated._id)
+      .populate("sellerId", "name email role")
+      .populate("userId", "name email")
+      .populate("productId", "title brand");
 
     const stats = await buildStats();
 

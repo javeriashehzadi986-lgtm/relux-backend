@@ -9,6 +9,7 @@ jest.mock("../services/notificationService", () => ({
   notifySaleEscrowReleased: jest.fn().mockResolvedValue(undefined),
   notifySaleDeliveryDisputed: jest.fn().mockResolvedValue(undefined),
   notifyBuyerConfirmedReceipt: jest.fn().mockResolvedValue(undefined),
+  notifyBuyerOrderShipped: jest.fn().mockResolvedValue(undefined),
 }));
 
 jest.mock("../services/escrowService", () => {
@@ -68,9 +69,17 @@ describe("Sale Escrow Flow — hold, confirm, dispute, auto-release", () => {
     User.findById = jest.fn().mockReturnValue(mockFindByIdWithSelect({ name: "Seller One" }));
   });
 
-  it("SE-01: shipping starts 48h auto-release timer", async () => {
+  it("SE-01: shipping starts the auto-release timer", async () => {
     const order = buildSaleOrder();
     Order.findOne = jest.fn().mockResolvedValue(order);
+    Product.findById = jest.fn().mockReturnValue(mockFindByIdWithSelect({ title: "Gown" }));
+    Order.findById = jest.fn().mockReturnValue({
+      populate: jest.fn().mockReturnValue({
+        populate: jest.fn().mockReturnValue({
+          populate: jest.fn().mockResolvedValue(order),
+        }),
+      }),
+    });
 
     const req = mockReq({
       user: { _id: order.sellerId, role: "seller" },
@@ -84,7 +93,11 @@ describe("Sale Escrow Flow — hold, confirm, dispute, auto-release", () => {
     expect(order.fulfillmentStatus).toBe("shipped");
     expect(order.shippedAt).toBeInstanceOf(Date);
     expect(order.saleEscrowAutoReleaseAt).toBeInstanceOf(Date);
-    expect(order.saleEscrowAutoReleaseAt.getTime()).toBeGreaterThan(Date.now());
+    // ~5 days out
+    const days =
+      (order.saleEscrowAutoReleaseAt.getTime() - Date.now()) / (24 * 60 * 60 * 1000);
+    expect(days).toBeGreaterThan(4.9);
+    expect(days).toBeLessThan(5.1);
   });
 
   it("SE-02: buyer confirm releases sale escrow", async () => {
@@ -192,7 +205,7 @@ describe("Sale Escrow Flow — hold, confirm, dispute, auto-release", () => {
     expect(breakdown.refundAmountPkr).toBe(0);
   });
 
-  it("SE-06: auto-release window is 48 hours", () => {
-    expect(SALE_AUTO_RELEASE_MS).toBe(48 * 60 * 60 * 1000);
+  it("SE-06: auto-release window is 5 days", () => {
+    expect(SALE_AUTO_RELEASE_MS).toBe(5 * 24 * 60 * 60 * 1000);
   });
 });

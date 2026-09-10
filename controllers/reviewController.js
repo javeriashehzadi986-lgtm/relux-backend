@@ -34,15 +34,27 @@ async function getSellerReviews(req, res) {
       return res.status(400).json({ message: "Invalid seller id" });
     }
 
+    // Optional: scope reviews to a single product (used on the listing detail page).
+    const productId = String(req.query.productId ?? "").trim();
+    const scopeToProduct = Boolean(productId);
+    if (scopeToProduct && !mongoose.Types.ObjectId.isValid(productId)) {
+      return res.status(400).json({ message: "Invalid product id" });
+    }
+
     const seller = await User.findById(sellerId).select("name createdAt role");
     if (!seller) {
       return res.status(404).json({ message: "Seller not found" });
     }
 
-    const reviews = await SellerReview.find({
+    const query = {
       sellerId,
       status: { $in: ["active", "flagged"] },
-    })
+    };
+    if (scopeToProduct) {
+      query.productId = productId;
+    }
+
+    const reviews = await SellerReview.find(query)
       .sort({ createdAt: -1 })
       .limit(50);
 
