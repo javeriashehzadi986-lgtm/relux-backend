@@ -33,6 +33,9 @@ async function getMySellerOrders(req, res) {
     const orders = await Order.find({
       sellerId: req.user._id,
       status: { $nin: ["cancelled"] },
+      // Won-auction sale orders are seller-visible only once the buyer has paid —
+      // the sale flow needs no seller approval, so hide the unpaid placeholder.
+      $nor: [{ type: "sale", paymentStatus: { $in: ["unpaid", "pending"] } }],
     })
       .populate("buyerId", "name email")
       .populate("productId", "title mainImage gallery brand listingType status isAvailable verificationStatus")
@@ -59,6 +62,11 @@ async function approveOrder(req, res) {
     }
     if (order.status !== "pending") {
       return res.status(400).json({ message: "Only pending requests can be approved" });
+    }
+    if (order.type === "sale") {
+      return res.status(400).json({
+        message: "Sale orders are confirmed automatically once the buyer pays",
+      });
     }
 
     const product = await Product.findById(order.productId).select(
@@ -113,6 +121,11 @@ async function rejectOrder(req, res) {
     }
     if (order.status !== "pending") {
       return res.status(400).json({ message: "Only pending requests can be rejected" });
+    }
+    if (order.type === "sale") {
+      return res.status(400).json({
+        message: "Sale orders cannot be rejected by the seller",
+      });
     }
 
     order.status = "rejected";

@@ -402,6 +402,9 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
               },
             ],
       actions: [
+        ...(awaitingPay
+          ? [{ id: "checkout", label: "Complete Checkout", variant: "primary" }]
+          : []),
         { id: "details", label: "View Details", variant: "outline", link: true },
         { id: "cancel", label: "Cancel Request", variant: "danger" },
       ],
@@ -590,6 +593,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
     ],
     actions: [
       { id: "details", label: "View Details", variant: "outline", link: true },
+      { id: "remove", label: "Remove from Order List", variant: "danger" },
       {
         id: "rent-again",
         label: this.type === "sale" ? "Shop Again" : "Rent Again",

@@ -14,6 +14,61 @@ const {
 } = require("../services/orderStatusService");
 const { releaseSaleEscrow } = require("../services/escrowService");
 const { emitOrderUpdated } = require("../services/orderSocketService");
+const Bid = require("../models/Bid");
+const Report = require("../models/Report");
+const { maybeFinalizeProduct } = require("../services/auctionFinalizeService");
+const { emitReportUpdated } = require("../services/reportSocketService");
+const { notifyReportResolved } = require("../services/notificationService");
+
+/**
+ * When a buyer had opened a delivery dispute and then confirms they received the
+ * item, that dispute is over — close the linked support-center report so it does
+ * not sit at "In Progress" forever.
+ */
+async function resolveBuyerDeliveryDispute(order) {
+  if (!order?.disputeReportId) return;
+
+  const report = await Report.findById(order.disputeReportId);
+  if (!report || report.status === "resolved") return;
+
+  const note = "Buyer confirmed they received the item — delivery dispute closed automatically.";
+  report.status = "resolved";
+  report.disputeStage = "resolved";
+  report.decision = report.decision || note;
+  report.adminReply = report.adminReply || note;
+  report.adminNote = [report.adminNote, "Auto-resolved: buyer confirmed receipt."]
+    .filter(Boolean)
+    .join("\n");
+  report.reviewedAt = new Date();
+  await report.save();
+
+  emitReportUpdated(report).catch(() => {});
+  notifyReportResolved({
+    reporterId: report.reporterId?._id ?? report.reporterId,
+    reporterRole: report.reporterRole,
+    reportId: report.reportId,
+    subject: report.subject,
+    decision: report.decision,
+  }).catch(() => {});
+}
+
+/**
+ * Make sure any auction this buyer has won already has its unpaid "sale" order,
+ * so a freshly-won item shows in My Orders without waiting for the cron.
+ */
+async function backfillWonAuctionOrders(buyerId) {
+  const bidProductIds = await Bid.distinct("productId", { userId: buyerId });
+  if (!bidProductIds.length) return;
+
+  const products = await Product.find({
+    _id: { $in: bidProductIds },
+    listingType: "sale",
+  });
+
+  await Promise.all(
+    products.map((product) => maybeFinalizeProduct(product).catch(() => {})),
+  );
+}
 
 function getErrorMessage(error) {
   if (error.code === 11000) {
@@ -200,6 +255,8 @@ async function createRentalRequest(req, res) {
 
 async function getMyBuyerOrders(req, res) {
   try {
+    await backfillWonAuctionOrders(req.user._id).catch(() => {});
+
     const orders = await Order.find({
       buyerId: req.user._id,
       removedByBuyer: false,
@@ -302,9 +359,11 @@ async function removeMyOrder(req, res) {
       return res.status(404).json({ message: "Order not found" });
     }
 
-    if (order.status !== "cancelled" && order.status !== "rejected") {
+    const removableStatuses = ["cancelled", "rejected", "completed"];
+    if (!removableStatuses.includes(order.status)) {
       return res.status(400).json({
-        message: "Only cancelled or rejected orders can be removed from your list",
+        message:
+          "Only cancelled, rejected, or completed orders can be removed from your list",
       });
     }
 
@@ -343,13 +402,17 @@ async function confirmReceivedOrder(req, res) {
     order.deliveryConfirmedAt = new Date();
 
     // Buyer confirming receipt after a delivery dispute means they accept the item —
-    // clear the freeze so escrow can release to the seller.
-    if (order.escrowSettlementStatus === "disputed") {
+    // clear the freeze so escrow can release to the seller, and close the report.
+    const hadDeliveryDispute = order.escrowSettlementStatus === "disputed";
+    if (hadDeliveryDispute) {
       order.escrowSettlementStatus = "none";
     }
 
     if (order.type === "sale" && order.escrowStatus === "held") {
       await order.save();
+      if (hadDeliveryDispute) {
+        await resolveBuyerDeliveryDispute(order).catch(() => {});
+      }
       const result = await releaseSaleEscrow(order, {}, "buyer_confirmed");
       const product = await Product.findById(order.productId).select("title");
       notifyBuyerConfirmedReceipt({
@@ -374,6 +437,10 @@ async function confirmReceivedOrder(req, res) {
     }
 
     await order.save();
+
+    if (hadDeliveryDispute) {
+      await resolveBuyerDeliveryDispute(order).catch(() => {});
+    }
 
     const product = await Product.findById(order.productId).select("title");
     notifyBuyerConfirmedReceipt({

@@ -1,10 +1,14 @@
 const Product = require("../models/Product");
 const Bid = require("../models/Bid");
 const Notification = require("../models/Notification");
+const Order = require("../models/Order");
+const User = require("../models/User");
 const {
   notifyAuctionWon,
   notifyAuctionEnded,
 } = require("./notificationService");
+
+const DEFAULT_DELIVERY_PKR = 300;
 
 function parseAmount(value) {
   if (typeof value === "number" && !Number.isNaN(value)) return value;
@@ -42,6 +46,72 @@ async function findExistingAuctionNotification({ userId, titles, productId, prod
 }
 
 /**
+ * Creates the winner's unpaid "sale" order as soon as the auction ends so the
+ * won item shows in the buyer's My Orders list with an "Awaiting Payment"
+ * status — not only after they open Stripe checkout.
+ *
+ * Idempotent: an atomic claim on `product.winnerOrderCreatedAt` guarantees the
+ * order is created at most once even under concurrent calls.
+ */
+async function ensureWinnerSaleOrder(product, highestBid) {
+  if (!product || product.listingType !== "sale") return null;
+  if (!highestBid || !highestBid.userId || !product.sellerId) return null;
+
+  // Any non-cancelled sale order (incl. an already-paid one) means we're done.
+  const existing = await Order.findOne({
+    productId: product._id,
+    type: "sale",
+    status: { $nin: ["cancelled", "rejected"] },
+  }).lean();
+  if (existing) return existing;
+
+  const claimed = await Product.findOneAndUpdate(
+    {
+      _id: product._id,
+      $or: [
+        { winnerOrderCreatedAt: null },
+        { winnerOrderCreatedAt: { $exists: false } },
+      ],
+    },
+    { $set: { winnerOrderCreatedAt: new Date() } },
+    { new: true },
+  );
+  if (!claimed) return null;
+
+  const winningBid =
+    parseAmount(highestBid.amount) ||
+    parseAmount(product.startingBid) ||
+    parseAmount(product.salePrice) ||
+    0;
+  const deliveryChargesPkr = DEFAULT_DELIVERY_PKR;
+
+  try {
+    const buyer = await User.findById(highestBid.userId).select("name").lean();
+    return await Order.create({
+      buyerId: highestBid.userId,
+      sellerId: product.sellerId,
+      productId: product._id,
+      type: "sale",
+      status: "pending",
+      size: product.listingSize || "M",
+      buyerName: buyer?.name || "Buyer",
+      amountPkr: winningBid + deliveryChargesPkr,
+      itemAmountPkr: winningBid,
+      deliveryChargesPkr,
+      paymentStatus: "unpaid",
+      paymentProvider: "stripe",
+    });
+  } catch (error) {
+    // Release the claim so a later run can retry.
+    await Product.updateOne(
+      { _id: product._id },
+      { $set: { winnerOrderCreatedAt: null } },
+    ).catch(() => {});
+    throw error;
+  }
+}
+
+/**
  * Sends win / auction-ended notifications if missing.
  * Safe to call repeatedly (idempotent) — fixes cases where the product
  * already shows "Won" but the in-app notification never arrived.
@@ -63,6 +133,8 @@ async function ensureAuctionNotifications(product) {
   let sent = false;
 
   if (highestBid) {
+    await ensureWinnerSaleOrder(product, highestBid).catch(() => {});
+
     const existingWon = await findExistingAuctionNotification({
       userId: highestBid.userId,
       titles: "You Won the Auction",
@@ -150,6 +222,8 @@ async function finalizeAuction(product) {
 
   if (highestBid) {
     // Keep listing available for winner checkout — mark sold only after Stripe payment.
+    await ensureWinnerSaleOrder(claimed, highestBid).catch(() => {});
+
     await notifyAuctionWon({
       buyerId: highestBid.userId,
       productTitle,
@@ -225,6 +299,7 @@ module.exports = {
   finalizeEndedAuctions,
   maybeFinalizeProduct,
   ensureAuctionNotifications,
+  ensureWinnerSaleOrder,
   getAuctionEndDate,
   parseAmount,
 };

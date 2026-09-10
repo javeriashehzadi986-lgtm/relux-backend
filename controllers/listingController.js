@@ -43,11 +43,32 @@ async function validateListingBody(body) {
   if (!mainImage?.trim()) {
     return "At least one product image is required";
   }
-  if (listingType === "sale" && !body.salePrice?.trim()) {
-    return "Sale price is required for sale listings";
+  const isPositive = (value) => Number(String(value ?? "").trim()) > 0;
+
+  if (listingType === "sale") {
+    if (!body.salePrice?.trim()) {
+      return "Sale price is required for sale listings";
+    }
+    if (!isPositive(body.salePrice)) {
+      return "Sale price must be greater than 0";
+    }
+    if (body.startingBid?.trim() && !isPositive(body.startingBid)) {
+      return "Starting bid must be greater than 0";
+    }
+    if (body.minBid?.trim() && !isPositive(body.minBid)) {
+      return "Minimum bid increment must be greater than 0";
+    }
   }
-  if (listingType === "rent" && !body.rentPrice?.trim()) {
-    return "Rent price is required for rent listings";
+  if (listingType === "rent") {
+    if (!body.rentPrice?.trim()) {
+      return "Rent price is required for rent listings";
+    }
+    if (!isPositive(body.rentPrice)) {
+      return "Rent price must be greater than 0";
+    }
+    if (body.itemPrice?.trim() && !isPositive(body.itemPrice)) {
+      return "Item price must be greater than 0";
+    }
   }
   return null;
 }

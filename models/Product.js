@@ -40,6 +40,7 @@ const productSchema = new mongoose.Schema(
     adminNote: { type: String, default: "" },
     reviewedAt: { type: Date },
     auctionEndNotifiedAt: { type: Date, default: null },
+    winnerOrderCreatedAt: { type: Date, default: null },
   },
   { timestamps: true },
 );
