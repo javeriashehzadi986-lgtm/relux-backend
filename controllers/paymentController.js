@@ -2,11 +2,15 @@ const Bid = require("../models/Bid");
 const Order = require("../models/Order");
 const Product = require("../models/Product");
 const User = require("../models/User");
+const WebhookEvent = require("../models/WebhookEvent");
 const {
   notifyPaymentReceived,
   notifySaleOrderPaid,
   notifyRentalOrderPaid,
   notifySellerDispatchDetails,
+  notifyPaymentFailed,
+  notifyOrderRefunded,
+  notifySellerOrderRefunded,
 } = require("../services/notificationService");
 const { syncProductForOrder } = require("../services/orderStatusService");
 const { emitOrderUpdated } = require("../services/orderSocketService");
@@ -289,20 +293,23 @@ async function createSaleCheckout(req, res) {
       });
     }
 
+    const saleMetadata = {
+      orderId: order._id.toString(),
+      orderPublicId: order.orderId,
+      productId: product._id.toString(),
+      buyerId: req.user._id.toString(),
+      winningBidPkr: String(winningBid),
+      deliveryPkr: String(deliveryCharges),
+      totalPkr: String(totalPkr),
+    };
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: shipping.email || req.user.email || undefined,
       line_items: lineItems,
       ...getCheckoutSessionExtras(),
-      metadata: {
-        orderId: order._id.toString(),
-        orderPublicId: order.orderId,
-        productId: product._id.toString(),
-        buyerId: req.user._id.toString(),
-        winningBidPkr: String(winningBid),
-        deliveryPkr: String(deliveryCharges),
-        totalPkr: String(totalPkr),
-      },
+      metadata: saleMetadata,
+      payment_intent_data: { metadata: saleMetadata },
       success_url: `${frontend}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${frontend}/payment/cancel?product_id=${product._id}`,
     });
@@ -429,21 +436,24 @@ async function createRentalCheckout(req, res) {
       });
     }
 
+    const rentalMetadata = {
+      orderId: order._id.toString(),
+      orderPublicId: order.orderId,
+      productId: product._id.toString(),
+      buyerId: req.user._id.toString(),
+      orderType: "rental",
+      deliveryPkr: String(deliveryCharges),
+      itemAmountPkr: String(itemAmountPkr),
+      totalPkr: String(totalPkr),
+    };
+
     const session = await stripe.checkout.sessions.create({
       mode: "payment",
       customer_email: req.user.email || undefined,
       line_items: lineItems,
       ...getCheckoutSessionExtras(),
-      metadata: {
-        orderId: order._id.toString(),
-        orderPublicId: order.orderId,
-        productId: product._id.toString(),
-        buyerId: req.user._id.toString(),
-        orderType: "rental",
-        deliveryPkr: String(deliveryCharges),
-        itemAmountPkr: String(itemAmountPkr),
-        totalPkr: String(totalPkr),
-      },
+      metadata: rentalMetadata,
+      payment_intent_data: { metadata: rentalMetadata },
       success_url: `${frontend}/payment/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${frontend}/payment/cancel?order_id=${order._id}`,
     });
@@ -603,6 +613,115 @@ async function markOrderPaidFromSession(session, orderDoc) {
   return order;
 }
 
+/** Buyer's card was declined / payment attempt failed — let them retry, don't touch order.status */
+async function markOrderPaymentFailed(paymentIntent) {
+  const orderId = paymentIntent.metadata?.orderId;
+  const order = orderId
+    ? await Order.findById(orderId)
+    : await Order.findOne({ stripePaymentIntentId: paymentIntent.id });
+
+  if (!order) {
+    console.warn("[stripe webhook] payment_intent.payment_failed — no matching order", paymentIntent.id);
+    return null;
+  }
+  if (order.paymentStatus === "paid") return order;
+
+  order.paymentStatus = "failed";
+  order.paymentFailureReason =
+    paymentIntent.last_payment_error?.message || "Payment was declined";
+  await order.save();
+  emitOrderUpdated(order);
+
+  const product = await Product.findById(order.productId);
+  const title = product?.title || (order.type === "rental" ? "Your rental" : "Your purchase");
+
+  notifyPaymentFailed({
+    buyerId: order.buyerId,
+    productTitle: title,
+    orderId: order._id,
+    reason: order.paymentFailureReason,
+  });
+
+  return order;
+}
+
+/** Checkout session timed out unpaid — buyer must start a fresh checkout attempt */
+async function markCheckoutExpired(session) {
+  const order =
+    (session.metadata?.orderId && (await Order.findById(session.metadata.orderId))) ||
+    (await Order.findOne({ stripeSessionId: session.id }));
+
+  if (!order) {
+    console.warn("[stripe webhook] checkout.session.expired — no matching order", session.id);
+    return null;
+  }
+  if (order.paymentStatus === "paid") return order;
+
+  order.paymentStatus = "expired";
+  order.paymentFailureReason = "Checkout session expired before payment was completed";
+  await order.save();
+  emitOrderUpdated(order);
+
+  return order;
+}
+
+/** Refund confirmed on Stripe's side — sync our records even if it was issued outside our admin flow */
+async function markOrderRefundedFromCharge(charge) {
+  const paymentIntentId =
+    typeof charge.payment_intent === "string" ? charge.payment_intent : charge.payment_intent?.id;
+  if (!paymentIntentId) return null;
+
+  const order = await Order.findOne({ stripePaymentIntentId: paymentIntentId });
+  if (!order) {
+    console.warn("[stripe webhook] charge.refunded — no matching order for", paymentIntentId);
+    return null;
+  }
+  if (order.paymentStatus === "refunded") return order; // already handled by our settlement/admin refund flow
+
+  const isFullRefund = charge.amount_refunded >= charge.amount;
+  if (!isFullRefund) {
+    console.warn(
+      `[stripe webhook] partial refund on charge ${charge.id} for order ${order.orderId} — leaving order status untouched`,
+    );
+    return order;
+  }
+
+  const refundId = charge.refunds?.data?.[0]?.id || "";
+  order.paymentStatus = "refunded";
+  order.refundedAt = new Date();
+  if (refundId) order.stripeRefundId = refundId;
+  if (order.escrowStatus === "held") {
+    order.escrowStatus = "released";
+    order.escrowReleasedAt = new Date();
+  }
+  if (order.status !== "completed") {
+    order.status = "cancelled";
+  }
+  await order.save();
+  await syncProductForOrder(order);
+  emitOrderUpdated(order);
+
+  const product = await Product.findById(order.productId);
+  const title = product?.title || (order.type === "rental" ? "Your rental" : "Your purchase");
+  const amountLabel = order.amountPkr
+    ? `PKR ${Number(order.amountPkr).toLocaleString("en-PK")}`
+    : "";
+
+  notifyOrderRefunded({
+    buyerId: order.buyerId,
+    productTitle: title,
+    orderId: order._id,
+    amountLabel,
+  });
+  notifySellerOrderRefunded({
+    sellerId: order.sellerId,
+    productTitle: title,
+    orderId: order._id,
+  });
+
+  return order;
+}
+
 async function handleStripeWebhook(req, res) {
   const signature = req.headers["stripe-signature"];
   const webhookSecret = process.env.STRIPE_WEBHOOK_SECRET;
@@ -624,16 +743,49 @@ async function handleStripeWebhook(req, res) {
     return res.status(400).send(`Webhook Error: ${error.message}`);
   }
 
+  // Idempotency guard — Stripe can redeliver the same event; only process each event id once.
+  // The record is removed again below if processing throws, so a real failure still gets retried.
+  let eventLogged = false;
   try {
-    if (event.type === "checkout.session.completed") {
-      const session = event.data.object;
-      if (session.payment_status === "paid" || session.status === "complete") {
-        await markOrderPaidFromSession(session);
+    await WebhookEvent.create({ stripeEventId: event.id, type: event.type });
+    eventLogged = true;
+  } catch (error) {
+    if (error?.code === 11000) {
+      return res.json({ received: true, duplicate: true });
+    }
+    console.error("[stripe webhook] event log failed, processing anyway", error.message || error);
+  }
+
+  try {
+    switch (event.type) {
+      case "checkout.session.completed": {
+        const session = event.data.object;
+        if (session.payment_status === "paid" || session.status === "complete") {
+          await markOrderPaidFromSession(session);
+        }
+        break;
       }
+      case "checkout.session.expired": {
+        await markCheckoutExpired(event.data.object);
+        break;
+      }
+      case "payment_intent.payment_failed": {
+        await markOrderPaymentFailed(event.data.object);
+        break;
+      }
+      case "charge.refunded": {
+        await markOrderRefundedFromCharge(event.data.object);
+        break;
+      }
+      default:
+        break; // Stripe just needs the 2xx acknowledgment for events we don't act on
     }
     res.json({ received: true });
   } catch (error) {
     console.error("[stripe webhook] handler", error);
+    if (eventLogged) {
+      await WebhookEvent.deleteOne({ stripeEventId: event.id }).catch(() => {});
+    }
     res.status(500).json({ message: getErrorMessage(error) });
   }
 }

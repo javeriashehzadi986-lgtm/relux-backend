@@ -56,10 +56,11 @@ const orderSchema = new mongoose.Schema(
     // Payment (Stripe checkout for resale / auction wins)
     paymentStatus: {
       type: String,
-      enum: ["unpaid", "pending", "paid", "failed", "refunded"],
+      enum: ["unpaid", "pending", "paid", "failed", "expired", "refunded"],
       default: "unpaid",
       index: true,
     },
+    paymentFailureReason: { type: String, trim: true, default: "" },
     paymentProvider: { type: String, trim: true, default: "" },
     amountPkr: { type: Number, default: 0 },
     itemAmountPkr: { type: Number, default: 0 },
@@ -294,6 +295,7 @@ orderSchema.methods.toBuyerJSON = function toBuyerJSON() {
   const payment = {
     paymentStatus: this.paymentStatus || "unpaid",
     paymentLabel: getPaymentLabel(this),
+    paymentFailureReason: this.paymentFailureReason || "",
     amountPkr: this.amountPkr || 0,
     itemAmountPkr: this.itemAmountPkr || 0,
     deliveryChargesPkr: this.deliveryChargesPkr || 0,

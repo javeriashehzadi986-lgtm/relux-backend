@@ -145,6 +145,7 @@ function getPaymentLabel(order) {
   if (status === "unpaid") return "Unpaid";
   if (status === "pending") return "Payment Pending";
   if (status === "failed") return "Payment Failed";
+  if (status === "expired") return "Checkout Expired";
 
   if (status === "refunded") {
     if (order.refundAmountPkr > 0) {

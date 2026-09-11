@@ -548,6 +548,47 @@ function notifySaleOrderPaid({ sellerId, productTitle, orderId }) {
   });
 }
 
+function notifyPaymentFailed({ buyerId, productTitle, orderId, reason }) {
+  return notifyUser({
+    userId: buyerId,
+    title: "Payment Failed",
+    message: reason
+      ? `Your Stripe payment did not go through: ${reason}. Please try again with a different card.`
+      : "Your Stripe payment did not go through. Please try again with a different card.",
+    highlight: productTitle,
+    category: "payments",
+    iconVariant: "tertiary",
+    link: "/profile?section=orders",
+  });
+}
+
+function notifyOrderRefunded({ buyerId, productTitle, orderId, amountLabel }) {
+  return notifyUser({
+    userId: buyerId,
+    title: "Payment Refunded",
+    message: amountLabel
+      ? `Your payment of ${amountLabel} was refunded.`
+      : "Your payment for this order was refunded.",
+    highlight: productTitle,
+    category: "payments",
+    iconVariant: "primary",
+    link: "/profile?section=orders",
+  });
+}
+
+function notifySellerOrderRefunded({ sellerId, productTitle, orderId }) {
+  return notifyUser({
+    userId: sellerId,
+    title: "Order Refunded",
+    message:
+      "This order's payment was refunded to the buyer. The order has been cancelled and no payout will be made.",
+    highlight: productTitle,
+    category: "payments",
+    iconVariant: "muted",
+    link: "/sellerProfile?section=orders",
+  });
+}
+
 function notifyReportResolved({ reporterId, reporterRole, reportId, subject, decision }) {
   const link =
     reporterRole === "seller"
@@ -763,6 +804,9 @@ module.exports = {
   notifyBroadcast,
   notifyPaymentReceived,
   notifySaleOrderPaid,
+  notifyPaymentFailed,
+  notifyOrderRefunded,
+  notifySellerOrderRefunded,
   notifyRentalOrderPaid,
   notifySellerDispatchDetails,
   notifyReportResolved,
