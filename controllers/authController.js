@@ -278,6 +278,13 @@ async function login(req, res) {
       });
     }
 
+    if (user.status === "banned") {
+      return res.status(403).json({
+        message: "This account has been suspended by an admin. Contact support for details.",
+        code: "ACCOUNT_BANNED",
+      });
+    }
+
     user.lastLoginAt = new Date();
     await user.save();
 
@@ -641,6 +648,13 @@ async function googleAuth(req, res) {
     let isNewUser = false;
 
     if (user) {
+      if (user.status === "banned") {
+        return res.status(403).json({
+          message: "This account has been suspended by an admin. Contact support for details.",
+          code: "ACCOUNT_BANNED",
+        });
+      }
+
       if (user.status === "suspended" || user.status === "rejected") {
         await releaseDeletedUserForReSignup(user);
         user = null;

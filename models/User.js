@@ -18,7 +18,7 @@ const userSchema = new mongoose.Schema(
     // true = user chose a Relux password. false/missing for Google-only until they set one.
     passwordSetByUser: { type: Boolean },
     role: { type: String, enum: ["buyer", "seller", "admin"], default: "buyer" },
-    status: { type: String, enum: ["active", "pending", "rejected", "suspended"], default: "active" },
+    status: { type: String, enum: ["active", "pending", "rejected", "suspended", "banned"], default: "active" },
     lastLoginAt: { type: Date, default: null },
     twoFactorEnabled: { type: Boolean, default: false },
     notificationPrefs: {

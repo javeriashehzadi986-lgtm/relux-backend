@@ -1,5 +1,6 @@
 const User = require("../models/User");
 const Order = require("../models/Order");
+const Product = require("../models/Product");
 const SellerVerification = require("../models/SellerVerification");
 
 function getErrorMessage(error) {
@@ -120,7 +121,8 @@ async function findManagedUser(id) {
   return { user };
 }
 
-/** Admin: suspend buyer/seller */
+/** Admin: ban buyer/seller — account is deactivated, listings are removed,
+ * and the email is permanently blocked from creating a new Relux Hub account. */
 async function suspendUser(req, res) {
   try {
     if (String(req.user._id) === String(req.params.id)) {
@@ -130,8 +132,15 @@ async function suspendUser(req, res) {
     const { user, error } = await findManagedUser(req.params.id);
     if (error) return res.status(error.status).json({ message: error.message });
 
-    user.status = "suspended";
+    user.status = "banned";
     await user.save();
+
+    if (user.role === "seller") {
+      await Product.updateMany(
+        { sellerId: user._id, status: { $in: ["pending", "active"] } },
+        { status: "removed" },
+      );
+    }
 
     const ordersMap = await getOrdersCountMap([user._id]);
     res.json({

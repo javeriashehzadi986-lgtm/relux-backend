@@ -20,6 +20,12 @@ async function protect(req, res, next) {
     if (!req.user) {
       return res.status(401).json({ message: "User not found" });
     }
+    if (req.user.status === "banned") {
+      return res.status(403).json({
+        message: "This account has been suspended by an admin. Contact support for details.",
+        code: "ACCOUNT_BANNED",
+      });
+    }
     next();
   } catch {
     return res.status(401).json({ message: "Invalid token" });
