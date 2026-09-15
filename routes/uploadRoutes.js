@@ -6,6 +6,7 @@ const {
   uploadVerificationImage,
   uploadSupportImage,
   uploadCategoryImage,
+  uploadChatImage,
 } = require("../controllers/uploadController");
 
 const router = express.Router();
@@ -54,6 +55,13 @@ router.post(
   authorize("admin"),
   runUpload(imageUpload.single("file")),
   uploadCategoryImage,
+);
+
+router.post(
+  "/chat",
+  protect,
+  runUpload(imageUpload.single("file")),
+  uploadChatImage,
 );
 
 module.exports = router;

@@ -5,6 +5,7 @@ const UPLOAD_FOLDERS = {
   verification: "relux/verification",
   support: "relux/support",
   categories: "relux/categories",
+  chat: "relux/chat",
 };
 
 function getUploadFolder(kind) {

@@ -17,6 +17,76 @@ async function removeLegacyProductIndexes() {
   }
 }
 
+async function mergeDuplicateConversations() {
+  try {
+    const Conversation = require("../models/Conversation");
+    const Message = require("../models/Message");
+
+    const duplicateGroups = await Conversation.aggregate([
+      {
+        $group: {
+          _id: { buyerId: "$buyerId", sellerId: "$sellerId" },
+          ids: { $push: "$_id" },
+          count: { $sum: 1 },
+        },
+      },
+      { $match: { count: { $gt: 1 } } },
+    ]);
+
+    if (!duplicateGroups.length) return;
+
+    for (const group of duplicateGroups) {
+      const conversations = await Conversation.find({ _id: { $in: group.ids } }).sort({
+        createdAt: 1,
+      });
+      const [primary, ...extras] = conversations;
+
+      for (const extra of extras) {
+        await Message.updateMany(
+          { conversationId: extra._id },
+          { conversationId: primary._id },
+        );
+
+        primary.unreadBuyer += extra.unreadBuyer || 0;
+        primary.unreadSeller += extra.unreadSeller || 0;
+
+        if (extra.lastMessageAt > primary.lastMessageAt) {
+          primary.lastMessageAt = extra.lastMessageAt;
+          primary.lastMessageText = extra.lastMessageText;
+        }
+      }
+
+      await primary.save();
+      await Conversation.deleteMany({ _id: { $in: extras.map((extra) => extra._id) } });
+    }
+
+    console.log(
+      `Merged duplicate conversations for ${duplicateGroups.length} buyer/seller pair(s)`,
+    );
+  } catch (error) {
+    console.warn("Could not merge duplicate conversations:", error.message);
+  }
+}
+
+async function removeLegacyConversationIndex() {
+  try {
+    const collection = mongoose.connection.db.collection("conversations");
+    const indexes = await collection.indexes();
+    const legacyIndex = indexes.find(
+      (index) => index.name === "buyerId_1_sellerId_1_listingKey_1",
+    );
+
+    if (!legacyIndex) return;
+
+    await collection.dropIndex("buyerId_1_sellerId_1_listingKey_1");
+    console.log("Removed legacy conversations index: buyerId_1_sellerId_1_listingKey_1");
+  } catch (error) {
+    if (error.codeName !== "IndexNotFound") {
+      console.warn("Could not remove legacy conversations index:", error.message);
+    }
+  }
+}
+
 async function backfillMissingOrderIds() {
   try {
     const Order = require("../models/Order");
@@ -52,6 +122,8 @@ const connectDB = async () => {
     console.log(`MongoDB connected: ${conn.connection.host}`);
     console.log(`Database: ${conn.connection.name}`);
     await removeLegacyProductIndexes();
+    await mergeDuplicateConversations();
+    await removeLegacyConversationIndex();
     await backfillMissingOrderIds();
   } catch (error) {
     console.error("MongoDB connection error:", error.message);

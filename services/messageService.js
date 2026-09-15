@@ -1,6 +1,5 @@
 const Conversation = require("../models/Conversation");
 const Message = require("../models/Message");
-const { notifyNewMessage } = require("./notificationService");
 const { getIO } = require("../socket/io");
 
 function formatMessageTime(date) {
@@ -161,15 +160,9 @@ async function sendMessageToConversation({ conversationId, user, text, image = "
     throw error;
   }
 
-  const message = await Message.create({
-    conversationId: conversation._id,
-    senderId: user._id,
-    text: trimmed,
-    image: image?.trim() || "",
-  });
-
+  const now = new Date();
   conversation.lastMessageText = trimmed;
-  conversation.lastMessageAt = message.createdAt;
+  conversation.lastMessageAt = now;
 
   if (isBuyer) {
     conversation.unreadSeller += 1;
@@ -177,19 +170,15 @@ async function sendMessageToConversation({ conversationId, user, text, image = "
     conversation.unreadBuyer += 1;
   }
 
-  await conversation.save();
-
-  const recipientId = isBuyer
-    ? conversation.sellerId?._id ?? conversation.sellerId
-    : conversation.buyerId?._id ?? conversation.buyerId;
-
-  notifyNewMessage({
-    userId: recipientId,
-    senderName: user.name,
-    preview: trimmed.length > 120 ? `${trimmed.slice(0, 117)}...` : trimmed,
-    conversationId: conversation._id,
-    listingTitle: conversation.listingTitle,
-  });
+  const [message] = await Promise.all([
+    Message.create({
+      conversationId: conversation._id,
+      senderId: user._id,
+      text: trimmed,
+      image: image?.trim() || "",
+    }),
+    conversation.save(),
+  ]);
 
   emitNewMessage(conversation, message, user._id);
   emitConversationUpdate(conversation, user._id);
@@ -217,15 +206,17 @@ async function markConversationReadForUser(conversationId, userId) {
     conversation.unreadSeller = 0;
   }
 
-  await conversation.save();
-  await Message.updateMany(
-    {
-      conversationId: conversation._id,
-      senderId: { $ne: userId },
-      readAt: null,
-    },
-    { readAt: new Date() },
-  );
+  await Promise.all([
+    conversation.save(),
+    Message.updateMany(
+      {
+        conversationId: conversation._id,
+        senderId: { $ne: userId },
+        readAt: null,
+      },
+      { readAt: new Date() },
+    ),
+  ]);
 
   emitMessagesRead(conversation, userId);
   emitConversationUpdate(conversation, userId);

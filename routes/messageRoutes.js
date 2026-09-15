@@ -9,6 +9,7 @@ const {
   markAllConversationsRead,
   toggleConversationMute,
   clearConversationMessages,
+  deleteConversation,
   blockConversation,
   getUnreadCount,
 } = require("../controllers/messageController");
@@ -26,6 +27,7 @@ router.post("/conversations/:id/messages", sendMessage);
 router.patch("/conversations/:id/read", markConversationRead);
 router.patch("/conversations/:id/mute", toggleConversationMute);
 router.delete("/conversations/:id/messages", clearConversationMessages);
+router.delete("/conversations/:id", deleteConversation);
 router.patch("/conversations/:id/block", blockConversation);
 
 module.exports = router;

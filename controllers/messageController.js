@@ -281,7 +281,6 @@ async function openConversation(req, res) {
     let conversation = await Conversation.findOne({
       buyerId,
       sellerId,
-      listingKey: listing.listingKey,
     })
       .populate("buyerId", "name email role")
       .populate("sellerId", "name email role");
@@ -430,6 +429,22 @@ async function clearConversationMessages(req, res) {
   }
 }
 
+async function deleteConversation(req, res) {
+  try {
+    const conversation = await findConversationForUser(req.params.id, req.user._id);
+    if (!conversation) {
+      return res.status(404).json({ message: "Conversation not found" });
+    }
+
+    await Message.deleteMany({ conversationId: conversation._id });
+    await Conversation.deleteOne({ _id: conversation._id });
+
+    res.json({ message: "Chat deleted" });
+  } catch (error) {
+    res.status(500).json({ message: getErrorMessage(error) });
+  }
+}
+
 async function blockConversation(req, res) {
   try {
     const conversation = await findConversationForUser(req.params.id, req.user._id);
@@ -485,6 +500,7 @@ module.exports = {
   markAllConversationsRead,
   toggleConversationMute,
   clearConversationMessages,
+  deleteConversation,
   blockConversation,
   getUnreadCount,
 };
